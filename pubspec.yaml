@@ -1,0 +1,51 @@
+name: app_scan
+description: Ứng dụng scan tài liệu cá nhân ngoại tuyến cho iOS và Android (Scan, Chỉnh góc, Bộ lọc, OCR Tiếng Việt/Anh, PDF nhiều trang).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Camera, Image Picker & File Picker
+  camera: ^0.11.0+2
+  image_picker: ^1.1.2
+  file_picker: ^8.1.2
+
+  # Offline OCR (Bundled Latin model supports Vietnamese & English)
+  google_mlkit_text_recognition: ^0.13.1
+
+  # Image processing & PDF generation / rasterization
+  image: ^4.2.0
+  pdf: ^3.11.1
+  printing: ^5.13.3
+
+  # Local Storage & SQLite Database (Full-Text Search)
+  sqflite: ^2.3.3+1
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  shared_preferences: ^2.3.2
+  share_plus: ^10.0.2
+
+  # Biometric Security (Face ID / Touch ID / Android Biometrics)
+  local_auth: ^2.3.0
+
+  # Utilities
+  uuid: ^4.5.0
+  intl: ^0.19.0
+  collection: ^1.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  sqflite_common_ffi: ^2.3.3
+
+flutter:
+  uses-material-design: true
+
