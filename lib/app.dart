@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'screens/library_screen.dart';
 import 'state/app_state.dart';
+import 'theme/stitch_theme.dart';
 
 class AppScanApp extends StatelessWidget {
   final AppState appState;
@@ -26,23 +27,9 @@ class AppScanApp extends StatelessWidget {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      theme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'BeVietnamPro',
-        colorSchemeSeed: const Color(0xFF00695C),
-        brightness: Brightness.light,
-        appBarTheme: const AppBarTheme(
-          centerTitle: false,
-        ),
-        visualDensity: VisualDensity.standard,
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        fontFamily: 'BeVietnamPro',
-        colorSchemeSeed: const Color(0xFF00897B),
-        brightness: Brightness.dark,
-        visualDensity: VisualDensity.standard,
-      ),
+      theme: StitchTheme.buildLightTheme(),
+      darkTheme: StitchTheme.buildDarkTheme(),
+      themeMode: ThemeMode.light,
       home: LibraryScreen(appState: appState),
     );
   }

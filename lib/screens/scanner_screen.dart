@@ -5,12 +5,16 @@ import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/scan_models.dart';
+import '../theme/stitch_theme.dart';
 
-/// Màn hình Camera AI Quét Tài Liệu:
-/// - KHÔNG dùng khung vùng an toàn cố định.
-/// - Tự động phát hiện tờ giấy/tài liệu ở bất kỳ vị trí nào trên ống kính theo thời gian thực
-///   từ luồng YUV/BGRA của Camera, vẽ đa giác 4 góc bám sát mép giấy thật và tự chụp khi giữ êm.
-/// - Tích hợp nút chuyển nhanh sang trình quét AI gốc của hệ điều hành (ML Kit / VisionKit).
+/// Màn hình Camera AI Quét Tài Liệu Không Khung chuẩn thiết kế Google Stitch
+/// (`2._camera_qu_t_ai_kh_ng_khung/code.html`):
+/// - Tuyệt đối KHÔNG dùng khung vùng an toàn cố định.
+/// - Tự động phát hiện tờ giấy/tài liệu ở bất kỳ vị trí nào trên ống kính theo thời gian thực,
+///   vẽ lưới đa giác AI màu xanh ngọc (`#9CF0FF`) kèm tia quét laser động, 4 nút đỉnh phát sáng,
+///   nhãn "GÓC CHÍNH XÁC 99%" và tự động chụp khi giữ êm.
+/// - Thanh điều khiển nổi phía trên, khay ảnh thu nhỏ nhiều trang (`54x70`), cảm biến ánh sáng
+///   và cụm nút chụp 2 vòng (Dual-Ring Shutter `78px`) ở vùng ngón cái dưới cùng (`#0F1215`).
 class ScannerScreen extends StatefulWidget {
   final bool singleShotMode;
 
@@ -24,15 +28,17 @@ class ScannerScreen extends StatefulWidget {
 }
 
 class _ScannerScreenState extends State<ScannerScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
+  late final AnimationController _laserController;
 
   bool _initializingCamera = true;
   String? _cameraError;
   bool _aiAutoCapture = true;
   bool _isTakingPicture = false;
   bool _isAnalyzingFrame = false;
+  bool _goodLighting = true;
   FlashMode _flashMode = FlashMode.off;
 
   /// Đa giác 4 góc của tờ giấy đang được AI phát hiện trực tiếp trên luồng camera.
@@ -46,12 +52,17 @@ class _ScannerScreenState extends State<ScannerScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _laserController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    )..repeat(reverse: true);
     _setupCamera();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _laserController.dispose();
     _stopStreamAndDispose();
     super.dispose();
   }
@@ -201,9 +212,8 @@ class _ScannerScreenState extends State<ScannerScreen>
     final bytes = plane.bytes;
     final rowStride = plane.bytesPerRow;
     final isBgra = image.format.group == ImageFormatGroup.bgra8888;
-    final step = 8;
+    const step = 8;
 
-    // Trên điện thoại cầm dọc (portrait), cảm biến camera thường xoay 90 độ.
     final rawW = image.width;
     final rawH = image.height;
     final gW = rawW ~/ step;
@@ -226,12 +236,14 @@ class _ScannerScreenState extends State<ScannerScreen>
       }
     }
 
-    // Tính ngưỡng Otsu phân tách vùng giấy sáng.
     final total = gW * gH;
     double sum = 0;
     for (int i = 0; i < 256; i++) {
       sum += i * hist[i];
     }
+    final avgLuma = sum / total;
+    _goodLighting = avgLuma >= 75;
+
     double sumB = 0;
     int wB = 0;
     double maxVar = 0;
@@ -274,7 +286,6 @@ class _ScannerScreenState extends State<ScannerScreen>
               (grid[idx + gW] - grid[idx - gW]).abs();
           if (grad > 22) {
             edgeCount++;
-            // Chuyển tọa độ cảm biến ngang sang khung hiển thị dọc của điện thoại.
             final double nx = Platform.isIOS
                 ? gx / (gW - 1)
                 : 1.0 - (gy / (gH - 1));
@@ -433,52 +444,13 @@ class _ScannerScreenState extends State<ScannerScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black87,
-        foregroundColor: Colors.white,
-        title: Text(
-          widget.singleShotMode ? 'Quét lại trang' : 'Camera AI Quét Tài Liệu',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        actions: [
-          IconButton(
-            onPressed: _switchToNativeOsAiScanner,
-            tooltip: 'Mở trình quét AI Hệ thống (ML Kit / VisionKit)',
-            icon: const Icon(Icons.auto_awesome, color: Colors.amberAccent),
-          ),
-          IconButton(
-            onPressed: () {
-              setState(() {
-                _aiAutoCapture = !_aiAutoCapture;
-                _stableFrameCount = 0;
-              });
-            },
-            tooltip: _aiAutoCapture ? 'Đang bật AI Tự chụp' : 'Chế độ chụp tay',
-            icon: Icon(
-              _aiAutoCapture ? Icons.motion_photos_auto : Icons.touch_app,
-              color: _aiAutoCapture ? Colors.tealAccent : Colors.white70,
-            ),
-          ),
-          IconButton(
-            onPressed: _cycleFlashMode,
-            tooltip: 'Đèn Flash',
-            icon: Icon(
-              switch (_flashMode) {
-                FlashMode.off => Icons.flash_off_rounded,
-                FlashMode.auto => Icons.flash_auto_rounded,
-                _ => Icons.flashlight_on_rounded,
-              },
-            ),
-          ),
-        ],
-      ),
+      backgroundColor: StitchTheme.surfaceProBase,
       body: Column(
         children: [
           Expanded(
             child: _buildCameraViewport(),
           ),
-          _buildBottomControls(),
+          _buildStitchBottomControlsBar(),
         ],
       ),
     );
@@ -487,194 +459,692 @@ class _ScannerScreenState extends State<ScannerScreen>
   Widget _buildCameraViewport() {
     if (_initializingCamera) {
       return const Center(
-        child: CircularProgressIndicator(color: Colors.tealAccent),
+        child: CircularProgressIndicator(color: StitchTheme.tertiaryFixed),
       );
     }
 
     if (_cameraError != null ||
         _controller == null ||
         !_controller!.value.isInitialized) {
-      return Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.no_photography_outlined,
-              size: 56,
-              color: Colors.amberAccent,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              _cameraError ?? 'Camera chưa sẵn sàng.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
-            ),
-            const SizedBox(height: 20),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _setupCamera,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.no_photography_outlined,
+                size: 56,
+                color: StitchTheme.tertiaryFixed,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _cameraError ?? 'Camera chưa sẵn sàng.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(height: 20),
+              Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: _setupCamera,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Thử lại'),
                   ),
-                  icon: const Icon(Icons.refresh_rounded, size: 18),
-                  label: const Text('Thử lại'),
-                ),
-                FilledButton.icon(
-                  onPressed: _pickFromGallery,
-                  icon: const Icon(Icons.photo_library_outlined, size: 18),
-                  label: const Text('Chọn ảnh từ thư viện'),
-                ),
-              ],
-            ),
-          ],
+                  FilledButton.icon(
+                    onPressed: _pickFromGallery,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: StitchTheme.primary,
+                    ),
+                    icon: const Icon(Icons.photo_library_outlined, size: 18),
+                    label: const Text('Chọn ảnh từ thư viện'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       );
     }
 
     final hasDoc = _liveDetectedQuad != null;
+    final stabilityProgress = (_stableFrameCount / 5.0).clamp(0.0, 1.0);
+    final countdownSec = (3 - (_stableFrameCount * 0.6).floor()).clamp(1, 3);
 
     return Stack(
       fit: StackFit.expand,
       children: [
+        // 1. Luồng Camera toàn màn hình
         Center(
           child: CameraPreview(_controller!),
         ),
 
-        // Vẽ đa giác AI động ôm sát mép tờ giấy thật (hoàn toàn KHÔNG có khung cố định).
-        if (hasDoc)
-          IgnorePointer(
-            child: CustomPaint(
-              painter: _LiveAiDocumentPolygonPainter(
-                quad: _liveDetectedQuad!,
-                stabilityProgress: (_stableFrameCount / 5.0).clamp(0.0, 1.0),
+        // 2. Lớp phủ Vignette chống chói trên/dưới chuẩn Stitch
+        IgnorePointer(
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  StitchTheme.surfaceProBase.withValues(alpha: 0.72),
+                  Colors.transparent,
+                  Colors.transparent,
+                  StitchTheme.surfaceProBase.withValues(alpha: 0.85),
+                ],
+                stops: const [0.0, 0.22, 0.76, 1.0],
               ),
             ),
           ),
+        ),
 
-        // Nhãn trạng thái AI nhỏ gọn phía trên.
-        Positioned(
-          top: 14,
-          left: 20,
-          right: 20,
-          child: Center(
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: hasDoc
-                    ? Colors.teal.shade900.withOpacity(0.85)
-                    : Colors.black54,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: hasDoc ? Colors.tealAccent : Colors.white24,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    hasDoc ? Icons.auto_awesome : Icons.radar_rounded,
-                    size: 15,
-                    color: hasDoc ? Colors.tealAccent : Colors.white70,
+        // 3. Đa giác AI động + Tia quét Laser + 4 nút góc + Nhãn "GÓC CHÍNH XÁC 99%"
+        if (hasDoc)
+          IgnorePointer(
+            child: AnimatedBuilder(
+              animation: _laserController,
+              builder: (context, _) {
+                return CustomPaint(
+                  painter: _LiveAiDocumentPolygonPainter(
+                    quad: _liveDetectedQuad!,
+                    stabilityProgress: stabilityProgress,
+                    laserProgress: _laserController.value,
                   ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      hasDoc
-                          ? (_aiAutoCapture
-                              ? 'AI đã bắt mép tài liệu — Giữ êm để tự chụp...'
-                              : 'AI đã bắt mép tài liệu — Bấm nút chụp')
-                          : 'Hướng camera vào trang giấy để AI tự nhận diện',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w500,
+                );
+              },
+            ),
+          ),
+
+        // 4. Cụm nút điều khiển nổi phía trên (Top Viewfinder Floating Controls)
+        SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Nút đóng Camera (X)
+                    _darkTranslucentCircleBtn(
+                      icon: Icons.close_rounded,
+                      color: Colors.white,
+                      onTap: () => Navigator.of(context).pop(_capturedPaths),
+                    ),
+                    // Viên thuốc trạng thái & Vòng đếm tự chụp AI ở giữa
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: StitchTheme.surfaceProBase.withValues(alpha: 0.82),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: hasDoc
+                              ? StitchTheme.tertiaryFixed.withValues(alpha: 0.6)
+                              : StitchTheme.borderDark,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 19,
+                            height: 19,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                CircularProgressIndicator(
+                                  value: hasDoc ? stabilityProgress : 0.25,
+                                  strokeWidth: 2.3,
+                                  backgroundColor: StitchTheme.borderDark,
+                                  color: StitchTheme.tertiaryFixed,
+                                ),
+                                Text(
+                                  hasDoc ? '$countdownSec' : 'AI',
+                                  style: const TextStyle(
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w700,
+                                    color: StitchTheme.tertiaryFixed,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            hasDoc
+                                ? 'Giữ yên... Tự chụp AI'
+                                : 'Hướng vào giấy để AI bắt mép',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                    // Cụm nút phải: Tự chụp BẬT/TẮT + Đèn Flash
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _aiAutoCapture = !_aiAutoCapture;
+                              _stableFrameCount = 0;
+                            });
+                          },
+                          child: Container(
+                            height: 34,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(
+                              color: StitchTheme.surfaceProBase
+                                  .withValues(alpha: 0.75),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: StitchTheme.borderDark),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 7,
+                                  height: 7,
+                                  decoration: BoxDecoration(
+                                    color: _aiAutoCapture
+                                        ? StitchTheme.statusSuccess
+                                        : StitchTheme.outline,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  _aiAutoCapture ? 'Tự chụp' : 'Chụp tay',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: _aiAutoCapture
+                                        ? StitchTheme.tertiaryFixed
+                                        : Colors.white70,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        _darkTranslucentCircleBtn(
+                          icon: switch (_flashMode) {
+                            FlashMode.off => Icons.flash_off_rounded,
+                            FlashMode.auto => Icons.flash_auto_rounded,
+                            _ => Icons.flash_on_rounded,
+                          },
+                          color: _flashMode == FlashMode.off
+                              ? Colors.white70
+                              : StitchTheme.tertiaryFixed,
+                          onTap: _cycleFlashMode,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                // Nhãn nổi chuyển sang Trình quét AI gốc ("AI Tự Động Làm Phẳng & Khử Bóng Mờ")
+                GestureDetector(
+                  onTap: _switchToNativeOsAiScanner,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: StitchTheme.surfaceProBase.withValues(alpha: 0.78),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: StitchTheme.primaryDarkAccent.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.auto_awesome_rounded,
+                          size: 15,
+                          color: StitchTheme.secondaryFixed,
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'AI Tự Động Làm Phẳng & Khử Bóng Mờ',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: StitchTheme.primaryFixed,
+                          ),
+                        ),
+                        SizedBox(width: 5),
+                        Icon(
+                          Icons.verified_rounded,
+                          size: 14,
+                          color: StitchTheme.tertiaryFixedDim,
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          ),
+        ),
+
+        // 5. Khay ảnh thu nhỏ nhiều trang + Nhãn cảm biến ánh sáng ở đáy Viewfinder
+        Positioned(
+          left: 16,
+          right: 16,
+          bottom: 12,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Khay trang đã chụp (`54x70`)
+              if (_capturedPaths.isNotEmpty)
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: StitchTheme.surfaceProBase.withValues(alpha: 0.82),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: StitchTheme.borderDark),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: SizedBox(
+                            height: 70,
+                            child: ListView.separated(
+                              shrinkWrap: true,
+                              scrollDirection: Axis.horizontal,
+                              itemCount: _capturedPaths.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(width: 8),
+                              itemBuilder: (context, idx) {
+                                final p = _capturedPaths[idx];
+                                return Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: SizedBox(
+                                        width: 54,
+                                        height: 70,
+                                        child: Image.file(
+                                          File(p),
+                                          fit: BoxFit.cover,
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      left: 4,
+                                      bottom: 4,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 5,
+                                          vertical: 1.5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: StitchTheme.surfaceProBase
+                                              .withValues(alpha: 0.9),
+                                          borderRadius:
+                                              BorderRadius.circular(999),
+                                        ),
+                                        child: Text(
+                                          '#${idx + 1}',
+                                          style: const TextStyle(
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: StitchTheme.primaryFixed,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Positioned(
+                                      top: -4,
+                                      right: -4,
+                                      child: GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _capturedPaths.removeAt(idx);
+                                          });
+                                        },
+                                        child: Container(
+                                          width: 18,
+                                          height: 18,
+                                          decoration: const BoxDecoration(
+                                            color:
+                                                StitchTheme.statusDangerStamp,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.close_rounded,
+                                            size: 12,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Đã lưu: ${_capturedPaths.length}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: StitchTheme.primaryFixed,
+                                ),
+                              ),
+                              const Text(
+                                'Ghép PDF',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: StitchTheme.tertiaryFixedDim,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                const SizedBox.shrink(),
+
+              // Nhãn cảm biến ánh sáng ("Ánh sáng tốt")
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: StitchTheme.surfaceProBase.withValues(alpha: 0.82),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: StitchTheme.borderDark),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _goodLighting
+                          ? Icons.wb_sunny_rounded
+                          : Icons.wb_twilight_rounded,
+                      size: 15,
+                      color: _goodLighting
+                          ? StitchTheme.statusSuccess
+                          : StitchTheme.statusWarning,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _goodLighting ? 'Ánh sáng tốt' : 'Thiếu sáng',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _buildBottomControls() {
+  Widget _darkTranslucentCircleBtn({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: StitchTheme.surfaceProBase.withValues(alpha: 0.72),
+          shape: BoxShape.circle,
+          border: Border.all(color: StitchTheme.borderDark),
+        ),
+        child: Icon(icon, size: 20, color: color),
+      ),
+    );
+  }
+
+  /// Thanh điều khiển dưới cùng chuẩn Stitch (`#0F1215` `surfaceDarkControls`).
+  Widget _buildStitchBottomControlsBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      color: Colors.black87,
+      color: StitchTheme.surfaceDarkControls,
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
       child: SafeArea(
         top: false,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            IconButton.filledTonal(
-              onPressed: _pickFromGallery,
-              iconSize: 24,
-              tooltip: 'Nhập ảnh từ thư viện',
-              icon: const Icon(Icons.photo_library_rounded),
-            ),
-            GestureDetector(
-              onTap: _isTakingPicture ? null : () => _capturePhoto(),
-              child: Container(
-                width: 70,
-                height: 70,
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: _liveDetectedQuad != null
-                        ? Colors.tealAccent
-                        : Colors.white,
-                    width: 3,
-                  ),
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _isTakingPicture ? Colors.grey : Colors.white,
-                  ),
-                  child: _isTakingPicture
-                      ? const Padding(
-                          padding: EdgeInsets.all(18.0),
-                          child: CircularProgressIndicator(strokeWidth: 2.5),
-                        )
-                      : const Icon(
-                          Icons.camera_rounded,
-                          color: Colors.black87,
-                          size: 30,
-                        ),
+            // Trái: Nút Thư viện
+            InkWell(
+              onTap: _pickFromGallery,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: const BoxDecoration(
+                        color: StitchTheme.surfaceProElevated,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.photo_library_outlined,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Thư viện',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        color: StitchTheme.surfaceContainerHighest,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
-            if (_capturedPaths.isNotEmpty)
-              FilledButton.icon(
-                onPressed: () {
-                  Navigator.of(context).pop(_capturedPaths);
-                },
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.tealAccent.shade700,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
+
+            // Giữa: Nút chụp 2 vòng 78px (Dual-Ring Shutter Button)
+            GestureDetector(
+              onTap: _isTakingPicture ? null : () => _capturePhoto(),
+              child: Container(
+                width: 78,
+                height: 78,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [
+                      StitchTheme.secondaryFixed,
+                      StitchTheme.tertiaryFixed,
+                      StitchTheme.statusSuccess,
+                    ],
+                    begin: Alignment.bottomLeft,
+                    end: Alignment.topRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: StitchTheme.tertiaryFixed.withValues(alpha: 0.25),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: Container(
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white,
+                  ),
+                  alignment: Alignment.center,
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: StitchTheme.primary,
+                    ),
+                    child: _isTakingPicture
+                        ? const Padding(
+                            padding: EdgeInsets.all(12.0),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.3,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.camera_alt_rounded,
+                            color: Colors.white,
+                            size: 24,
+                          ),
                   ),
                 ),
-                icon: CircleAvatar(
-                  radius: 12,
-                  backgroundImage: FileImage(File(_capturedPaths.last)),
-                ),
-                label: Text('Xong (${_capturedPaths.length})'),
+              ),
+            ),
+
+            // Phải: Nút Xong & Xuất OCR
+            if (_capturedPaths.isNotEmpty)
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop(_capturedPaths);
+                    },
+                    style: FilledButton.styleFrom(
+                      backgroundColor: StitchTheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Xong',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          width: 22,
+                          height: 22,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '${_capturedPaths.length}',
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.arrow_forward_rounded, size: 16),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  const Text(
+                    'Xuất OCR',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: StitchTheme.primaryFixed,
+                    ),
+                  ),
+                ],
               )
             else
-              const SizedBox(width: 48),
+              InkWell(
+                onTap: _switchToNativeOsAiScanner,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          color: StitchTheme.primaryContainerDark,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.auto_awesome_rounded,
+                          color: StitchTheme.tertiaryFixed,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'AI Gốc',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: StitchTheme.tertiaryFixed,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -682,14 +1152,21 @@ class _ScannerScreenState extends State<ScannerScreen>
   }
 }
 
-/// Vẽ đa giác 4 góc ôm sát mép tờ giấy thật khi AI nhận diện được tài liệu.
+/// Vẽ lưới đa giác AI động chuẩn Stitch (`2._camera_qu_t_ai_kh_ng_khung/code.html`):
+/// - Nền phủ `#00695C` (18% opacity).
+/// - Viền nét đứt phát sáng `#9CF0FF` + đường chéo holographic.
+/// - Tia quét Laser chuyển động dọc theo tờ giấy.
+/// - 4 đỉnh tròn `#004F45` viền `#9CF0FF` kèm vòng hào quang.
+/// - Nhãn "GÓC CHÍNH XÁC 99%" bám phía trên cạnh trên tờ giấy.
 class _LiveAiDocumentPolygonPainter extends CustomPainter {
   final CropQuad quad;
   final double stabilityProgress;
+  final double laserProgress;
 
   _LiveAiDocumentPolygonPainter({
     required this.quad,
     required this.stabilityProgress,
+    required this.laserProgress,
   });
 
   @override
@@ -705,27 +1182,109 @@ class _LiveAiDocumentPolygonPainter extends CustomPainter {
       ..lineTo(pts[3].dx, pts[3].dy)
       ..close();
 
+    // 1. Nền phủ màu xanh cổ vịt trong suốt
     final fillPaint = Paint()
-      ..color = const Color(0xFF00E676).withOpacity(0.18 + 0.12 * stabilityProgress)
+      ..color = StitchTheme.primaryContainer
+          .withValues(alpha: 0.18 + 0.10 * stabilityProgress)
       ..style = PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
 
+    // 2. Đường chéo Holographic mảnh bên trong tứ giác
+    final diagPaint = Paint()
+      ..color = StitchTheme.secondaryFixed.withValues(alpha: 0.16)
+      ..strokeWidth = 1.0
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(pts[0], pts[2], diagPaint);
+    canvas.drawLine(pts[1], pts[3], diagPaint);
+
+    // 3. Tia quét Laser chạy dọc theo phối cảnh tờ giấy
+    final leftPt = Offset.lerp(pts[0], pts[3], laserProgress)!;
+    final rightPt = Offset.lerp(pts[1], pts[2], laserProgress)!;
+    final laserPaint = Paint()
+      ..color = StitchTheme.tertiaryFixed.withValues(alpha: 0.85)
+      ..strokeWidth = 2.5
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    canvas.drawLine(leftPt, rightPt, laserPaint);
+
+    // 4. Viền tứ giác phát sáng
+    final glowPaint = Paint()
+      ..color = StitchTheme.secondaryFixed.withValues(alpha: 0.45)
+      ..strokeWidth = 5.0
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawPath(path, glowPaint);
+
     final borderPaint = Paint()
-      ..color = const Color(0xFF00E676)
-      ..strokeWidth = 3.0
+      ..color = StitchTheme.secondaryFixed
+      ..strokeWidth = 2.5
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
     canvas.drawPath(path, borderPaint);
 
+    // 5. 4 nút tròn ở 4 đỉnh tứ giác
     for (final pt in pts) {
-      canvas.drawCircle(pt, 6, Paint()..color = Colors.white);
-      canvas.drawCircle(pt, 4, Paint()..color = const Color(0xFF00E676));
+      canvas.drawCircle(
+        pt,
+        14,
+        Paint()..color = StitchTheme.secondaryFixed.withValues(alpha: 0.24),
+      );
+      canvas.drawCircle(
+        pt,
+        8.5,
+        Paint()..color = StitchTheme.primary,
+      );
+      canvas.drawCircle(
+        pt,
+        8.5,
+        Paint()
+          ..color = StitchTheme.secondaryFixed
+          ..strokeWidth = 2
+          ..style = PaintingStyle.stroke,
+      );
+      canvas.drawCircle(
+        pt,
+        3,
+        Paint()..color = StitchTheme.secondaryFixed,
+      );
     }
+
+    // 6. Nhãn "GÓC CHÍNH XÁC 99%" phía trên cạnh trên
+    final topCenter = Offset(
+      (pts[0].dx + pts[1].dx) / 2,
+      ((pts[0].dy + pts[1].dy) / 2 - 22).clamp(24.0, size.height - 40.0),
+    );
+    final badgeRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(center: topCenter, width: 122, height: 22),
+      const Radius.circular(11),
+    );
+    canvas.drawRRect(
+      badgeRect,
+      Paint()..color = StitchTheme.primary.withValues(alpha: 0.88),
+    );
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: 'GÓC CHÍNH XÁC 99%',
+        style: TextStyle(
+          fontFamily: 'BeVietnamPro',
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: StitchTheme.tertiaryFixed,
+          letterSpacing: 0.3,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(
+      canvas,
+      Offset(topCenter.dx - tp.width / 2, topCenter.dy - tp.height / 2),
+    );
   }
 
   @override
   bool shouldRepaint(covariant _LiveAiDocumentPolygonPainter oldDelegate) {
     return oldDelegate.quad != quad ||
-        oldDelegate.stabilityProgress != stabilityProgress;
+        oldDelegate.stabilityProgress != stabilityProgress ||
+        oldDelegate.laserProgress != laserProgress;
   }
 }

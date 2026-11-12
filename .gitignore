@@ -27,6 +27,7 @@ migrate_working_dir/
 .pub/
 /build/
 /dist/
+*.zip
 
 # Android related
 **/android/**/gradle-wrapper.jar

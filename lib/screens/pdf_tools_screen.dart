@@ -5,14 +5,15 @@ import 'package:path/path.dart' as p;
 import '../models/scan_models.dart';
 import '../services/benchmark_service.dart';
 import '../state/app_state.dart';
+import '../theme/stitch_theme.dart';
 import 'document_detail_screen.dart';
 
-/// Màn hình Công cụ PDF Mở rộng (Giai đoạn 4) & Kiểm chuẩn 30 mẫu (Giai đoạn 1 & 3):
-/// - Nhập tệp PDF có sẵn từ thiết bị (kiểm tra an toàn PDF hỏng).
-/// - Gộp nhiều tài liệu thành một PDF.
-/// - Tách trang từ tài liệu nhiều trang thành tài liệu mới.
-/// - Nén PDF theo mức dung lượng.
-/// - Chạy bộ kiểm định tự động 30 mẫu chuẩn (>= 27/30 mép giấy & CER <= 5%).
+/// Màn hình Công Cụ PDF & Khóa Sinh Trắc Học (Stitch Screen 7):
+/// - Thẻ Bảo Mật Sinh Trắc Học (Face ID / Vân tay, Mã hóa AES-256 On-Device).
+/// - Card 1: Nhập tệp PDF có sẵn từ thiết bị.
+/// - Card 2: Gộp nhiều tài liệu (Merge PDF) trực quan ngay trên thẻ hoặc hộp thoại.
+/// - Card 3: Tách trang tài liệu (Split PDF) theo khoảng trang (VD: 1-2, 4) hoặc chọn trang.
+/// - Nén PDF & Kiểm chuẩn tự động 30 mẫu nghiệm thu.
 class PdfToolsScreen extends StatefulWidget {
   final AppState appState;
 
@@ -26,8 +27,37 @@ class PdfToolsScreen extends StatefulWidget {
 }
 
 class _PdfToolsScreenState extends State<PdfToolsScreen> {
+  final Set<String> _selectedMergeDocIds = <String>{};
+  final TextEditingController _splitRangeCtrl =
+      TextEditingController(text: '1-2');
+  String? _selectedSplitDocId;
+
   BenchmarkSummaryReport? _benchmarkReport;
   bool _runningBenchmark = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final docs = widget.appState.documents;
+    if (docs.length >= 2) {
+      _selectedMergeDocIds.add(docs[0].id);
+      _selectedMergeDocIds.add(docs[1].id);
+    } else if (docs.length == 1) {
+      _selectedMergeDocIds.add(docs[0].id);
+    }
+    final multiDocs = docs.where((d) => d.pageCount >= 2).toList();
+    if (multiDocs.isNotEmpty) {
+      _selectedSplitDocId = multiDocs.first.id;
+    } else if (docs.isNotEmpty) {
+      _selectedSplitDocId = docs.first.id;
+    }
+  }
+
+  @override
+  void dispose() {
+    _splitRangeCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _importPdfFile() async {
     try {
@@ -69,96 +99,25 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
     }
   }
 
-  Future<void> _showMergeDocumentsDialog() async {
+  Future<void> _executeInlineMerge() async {
     final allDocs = widget.appState.documents;
-    if (allDocs.length < 2) {
+    final chosenDocs =
+        allDocs.where((d) => _selectedMergeDocIds.contains(d.id)).toList();
+
+    if (chosenDocs.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cần ít nhất 2 tài liệu trong thư viện để thực hiện Gộp PDF.'),
+          content:
+              Text('Vui lòng tích chọn ít nhất 2 tài liệu để Gộp PDF.'),
         ),
       );
       return;
     }
 
-    final selectedIds = <String>{};
-    final titleCtrl = TextEditingController(
-      text: 'Tài liệu gộp (${DateTime.now().day}/${DateTime.now().month})',
-    );
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: const Text('Gộp nhiều tài liệu'),
-              content: SizedBox(
-                width: 380,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: titleCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Tên tài liệu sau khi gộp',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: allDocs.length,
-                        itemBuilder: (_, idx) {
-                          final d = allDocs[idx];
-                          final checked = selectedIds.contains(d.id);
-                          return CheckboxListTile(
-                            value: checked,
-                            title: Text(d.title),
-                            subtitle: Text('${d.pageCount} trang'),
-                            onChanged: (val) {
-                              setDialogState(() {
-                                if (val == true) {
-                                  selectedIds.add(d.id);
-                                } else {
-                                  selectedIds.remove(d.id);
-                                }
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Hủy'),
-                ),
-                FilledButton(
-                  onPressed: selectedIds.length < 2
-                      ? null
-                      : () => Navigator.of(ctx).pop(true),
-                  child: Text('Gộp (${selectedIds.length})'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    if (confirmed != true || !mounted) return;
-    final chosenDocs =
-        allDocs.where((d) => selectedIds.contains(d.id)).toList();
-
     final merged = await widget.appState.mergeDocuments(
       sourceDocuments: chosenDocs,
-      mergedTitle: titleCtrl.text.trim().isEmpty
-          ? 'Tài liệu đã gộp'
-          : titleCtrl.text.trim(),
+      mergedTitle:
+          'Hồ sơ gộp (${DateTime.now().day}/${DateTime.now().month})',
     );
 
     if (!mounted) return;
@@ -172,124 +131,57 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
     );
   }
 
-  Future<void> _showSplitDocumentDialog() async {
-    final multiPageDocs =
-        widget.appState.documents.where((d) => d.pageCount >= 2).toList();
-    if (multiPageDocs.isEmpty) {
+  List<int> _parsePageRange(String input, int maxPages) {
+    final result = <int>{};
+    final parts = input.split(',');
+    for (final raw in parts) {
+      final token = raw.trim();
+      if (token.isEmpty) continue;
+      if (token.contains('-')) {
+        final bounds = token.split('-');
+        if (bounds.length == 2) {
+          final start = int.tryParse(bounds[0].trim());
+          final end = int.tryParse(bounds[1].trim());
+          if (start != null && end != null) {
+            final s = start.clamp(1, maxPages);
+            final e = end.clamp(1, maxPages);
+            for (int p = s; p <= e; p++) {
+              result.add(p - 1);
+            }
+          }
+        }
+      } else {
+        final single = int.tryParse(token);
+        if (single != null && single >= 1 && single <= maxPages) {
+          result.add(single - 1);
+        }
+      }
+    }
+    if (result.isEmpty && maxPages > 0) {
+      result.add(0);
+    }
+    final sorted = result.toList()..sort();
+    return sorted;
+  }
+
+  Future<void> _executeInlineSplit(ScanDocument sourceDoc) async {
+    if (sourceDoc.pageCount < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cần ít nhất 1 tài liệu có từ 2 trang trở lên để Tách trang.'),
+          content: Text(
+            'Tài liệu cần có từ 2 trang trở lên để thực hiện Tách trang.',
+          ),
         ),
       );
       return;
     }
 
-    ScanDocument selectedDoc = multiPageDocs.first;
-    final selectedPageIndexes = <int>{0};
-    final titleCtrl =
-        TextEditingController(text: '${selectedDoc.title} (Bản tách)');
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: const Text('Tách trang tài liệu'),
-              content: SizedBox(
-                width: 380,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    DropdownButtonFormField<ScanDocument>(
-                      value: selectedDoc,
-                      decoration: const InputDecoration(
-                        labelText: 'Chọn tài liệu gốc',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: multiPageDocs
-                          .map(
-                            (d) => DropdownMenuItem(
-                              value: d,
-                              child: Text('${d.title} (${d.pageCount} trang)'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setDialogState(() {
-                            selectedDoc = val;
-                            selectedPageIndexes
-                              ..clear()
-                              ..add(0);
-                            titleCtrl.text = '${val.title} (Bản tách)';
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: titleCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Tên tài liệu mới sau khi tách',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Chọn các trang muốn trích xuất:',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: List.generate(selectedDoc.pageCount, (idx) {
-                        final chosen = selectedPageIndexes.contains(idx);
-                        return FilterChip(
-                          label: Text('Trang ${idx + 1}'),
-                          selected: chosen,
-                          onSelected: (v) {
-                            setDialogState(() {
-                              if (v) {
-                                selectedPageIndexes.add(idx);
-                              } else {
-                                selectedPageIndexes.remove(idx);
-                              }
-                            });
-                          },
-                        );
-                      }),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Hủy'),
-                ),
-                FilledButton(
-                  onPressed: selectedPageIndexes.isEmpty
-                      ? null
-                      : () => Navigator.of(ctx).pop(true),
-                  child: Text('Tách (${selectedPageIndexes.length} trang)'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    if (confirmed != true || !mounted) return;
-    final sortedIdx = selectedPageIndexes.toList()..sort();
+    final indexes =
+        _parsePageRange(_splitRangeCtrl.text, sourceDoc.pageCount);
     final splitDoc = await widget.appState.splitDocument(
-      sourceDocument: selectedDoc,
-      selectedPageIndexes: sortedIdx,
-      newTitle:
-          titleCtrl.text.trim().isEmpty ? 'Bản tách' : titleCtrl.text.trim(),
+      sourceDocument: sourceDoc,
+      selectedPageIndexes: indexes,
+      newTitle: '${sourceDoc.title} (Bản tách)',
     );
 
     if (!mounted) return;
@@ -424,164 +316,998 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final allDocs = widget.appState.documents;
+    final selectedMergeDocs =
+        allDocs.where((d) => _selectedMergeDocIds.contains(d.id)).toList();
+    final totalMergePages =
+        selectedMergeDocs.fold<int>(0, (sum, d) => sum + d.pageCount);
+
+    ScanDocument? splitSourceDoc;
+    if (allDocs.isNotEmpty) {
+      splitSourceDoc = allDocs.firstWhere(
+        (d) => d.id == _selectedSplitDocId,
+        orElse: () => allDocs.first,
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Công cụ PDF & Kiểm chuẩn'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            'Bộ công cụ PDF ngoại tuyến (Giai đoạn 4)',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 10),
-          _toolCard(
-            icon: Icons.upload_file_outlined,
-            color: Colors.indigo,
-            title: 'Nhập tệp PDF có sẵn',
-            subtitle:
-                'Chuyển PDF có sẵn thành các trang ảnh để xoay, lọc, ký tên, OCR hoặc tách trang.',
-            onTap: _importPdfFile,
-          ),
-          _toolCard(
-            icon: Icons.merge_type,
-            color: Colors.teal,
-            title: 'Gộp nhiều tài liệu PDF',
-            subtitle:
-                'Ghép nối các tài liệu riêng lẻ trong thư viện thành một bộ hồ sơ PDF nhiều trang.',
-            onTap: _showMergeDocumentsDialog,
-          ),
-          _toolCard(
-            icon: Icons.call_split,
-            color: Colors.deepOrange,
-            title: 'Tách trang PDF',
-            subtitle:
-                'Trích xuất các trang bất kỳ từ một tài liệu nhiều trang sang tài liệu độc lập.',
-            onTap: _showSplitDocumentDialog,
-          ),
-          _toolCard(
-            icon: Icons.compress,
-            color: Colors.purple,
-            title: 'Nén dung lượng & Chọn khổ giấy (A4 / Letter / Hóa đơn)',
-            subtitle:
-                'Tối ưu hóa kích thước tệp PDF để gửi nhanh qua tin nhắn hoặc lưu trữ tiết kiệm.',
-            onTap: _showCompressExportDialog,
-          ),
-          const SizedBox(height: 24),
-          const Divider(),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Kiểm chuẩn 30 ảnh mẫu & Tiêu chí nghiệm thu',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
+      backgroundColor: StitchTheme.surface,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildTopAppBar(),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
+                children: [
+                  // 1. Biometric Security Hero Banner (Stitch Screen 7)
+                  _buildBiometricHeroBanner(),
+                  const SizedBox(height: 18),
+
+                  // 2. Section Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'TIỆN ÍCH XỬ LÝ TỆP PDF',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                          color: StitchTheme.textSubtle,
+                        ),
+                      ),
+                      Text(
+                        '4 công cụ sẵn sàng',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: StitchTheme.primary.withValues(alpha: 0.85),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 3. Card 1: Nhập tệp PDF có sẵn từ thiết bị
+                  _buildImportPdfCard(),
+                  const SizedBox(height: 14),
+
+                  // 4. Card 2: Gộp nhiều tài liệu (Merge PDF)
+                  _buildMergePdfCard(
+                    allDocs: allDocs,
+                    selectedCount: selectedMergeDocs.length,
+                    totalMergePages: totalMergePages,
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 5. Card 3: Tách trang tài liệu (Split PDF)
+                  _buildSplitPdfCard(
+                    allDocs: allDocs,
+                    splitSourceDoc: splitSourceDoc,
+                  ),
+                  const SizedBox(height: 14),
+
+                  // 6. Card 4: Nén dung lượng & Kiểm chuẩn 30 mẫu
+                  _buildCompressAndBenchmarkCard(),
+
+                  if (_benchmarkReport != null) ...[
+                    const SizedBox(height: 12),
+                    _buildBenchmarkSummaryCard(_benchmarkReport!),
+                  ],
+
+                  const SizedBox(height: 18),
+                  // 7. Bottom Trust Badge
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: StitchTheme.surfaceContainerLow,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: StitchTheme.borderLight),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.offline_bolt_rounded,
+                            size: 15,
+                            color: StitchTheme.primaryContainer,
                           ),
+                          SizedBox(width: 6),
+                          Text(
+                            '100% Offline Engine • Không tải tài liệu lên đám mây',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: StitchTheme.textSubtle,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    const Text(
-                      'Đánh giá tự động tiêu chí nhận diện mép >= 27/30 mẫu và CER <= 5%.',
-                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopAppBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+      decoration: const BoxDecoration(
+        color: StitchTheme.surface,
+        border: Border(
+          bottom: BorderSide(color: StitchTheme.borderLight),
+        ),
+      ),
+      child: Row(
+        children: [
+          InkWell(
+            onTap: () => Navigator.of(context).pop(),
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: const BoxDecoration(
+                color: StitchTheme.surfaceContainerLow,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.arrow_back_rounded,
+                size: 20,
+                color: StitchTheme.textMain,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Công Cụ PDF & Bảo Mật',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: StitchTheme.textMain,
+                  ),
+                ),
+                SizedBox(height: 1),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.lock_rounded,
+                      size: 12,
+                      color: StitchTheme.primaryContainer,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'Xử lý ngoại tuyến 100% on-device',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: StitchTheme.primaryContainer,
+                      ),
                     ),
                   ],
                 ),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: _runningBenchmark ? null : _runBenchmark,
-                icon: _runningBenchmark
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.fact_check_outlined),
-                label: const Text('Chạy 30 mẫu'),
-              ),
-            ],
+              ],
+            ),
           ),
-          if (_benchmarkReport != null) ...[
-            const SizedBox(height: 14),
-            _buildBenchmarkSummaryCard(_benchmarkReport!),
-          ],
+          Container(
+            width: 38,
+            height: 38,
+            decoration: const BoxDecoration(
+              color: StitchTheme.primaryContainerLight,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.verified_user_rounded,
+              color: StitchTheme.primary,
+              size: 20,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _toolCard({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
+  Widget _buildBiometricHeroBanner() {
+    final enabled = widget.appState.biometricLockEnabled;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFE0F2F1), Colors.white],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: StitchTheme.primary.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF191C1F).withValues(alpha: 0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: StitchTheme.primary,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(
+                      Icons.fingerprint_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ),
+                  Positioned(
+                    bottom: -2,
+                    right: -2,
+                    child: Container(
+                      width: 13,
+                      height: 13,
+                      decoration: BoxDecoration(
+                        color: enabled
+                            ? StitchTheme.statusSuccess
+                            : StitchTheme.statusWarning,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Flexible(
+                          child: Text(
+                            'Kho Tài Liệu An Toàn',
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                              color: StitchTheme.textMain,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: enabled
+                                ? const Color(0xFFD1FAE5)
+                                : const Color(0xFFFEF3C7),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            enabled ? 'Đang bật' : 'Đang tắt',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              color: enabled
+                                  ? const Color(0xFF047857)
+                                  : const Color(0xFFB45309),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    const Text(
+                      'Yêu cầu xác thực sinh trắc học khi mở ứng dụng hoặc chia sẻ hồ sơ quan trọng.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        height: 1.35,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: enabled,
+                activeColor: StitchTheme.primary,
+                onChanged: (val) async {
+                  await widget.appState.setBiometricLockEnabled(val);
+                  if (mounted) setState(() {});
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1, color: Color(0xFFD1E7E5)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.face_retouching_natural_rounded,
+                    size: 15,
+                    color: StitchTheme.primary,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    'Face ID / Vân tay: ${enabled ? 'BẬT' : 'TẮT'}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: StitchTheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.enhanced_encryption_rounded,
+                      size: 13,
+                      color: StitchTheme.textSubtle,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'Lưu trữ cục bộ On-Device',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildImportPdfCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: StitchTheme.borderLight),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF191C1F).withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: StitchTheme.primaryContainerLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.upload_file_rounded,
+                  color: StitchTheme.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Nhập tệp PDF có sẵn từ thiết bị',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: StitchTheme.textMain,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Chuyển đổi tệp PDF trong máy thành các trang để ký tên, đóng dấu hoặc chạy AI OCR tiếng Việt.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            onTap: _importPdfFile,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: StitchTheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: StitchTheme.primary.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.folder_open_rounded,
+                    color: StitchTheme.primary,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Chạm để chọn file .PDF trên thiết bị',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: StitchTheme.primary,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      'Duyệt tệp trên máy',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMergePdfCard({
+    required List<ScanDocument> allDocs,
+    required int selectedCount,
+    required int totalMergePages,
   }) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        onTap: onTap,
-        leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.14),
-          child: Icon(icon, color: color),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: StitchTheme.borderLight),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF191C1F).withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: StitchTheme.primaryContainerLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.call_merge_rounded,
+                  color: StitchTheme.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Gộp nhiều tài liệu (Merge PDF)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: StitchTheme.textMain,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Chọn các tài liệu trong thư viện để nối thành một tệp PDF duy nhất.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (allDocs.isNotEmpty)
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      if (_selectedMergeDocIds.length == allDocs.length) {
+                        _selectedMergeDocIds.clear();
+                      } else {
+                        _selectedMergeDocIds
+                            .addAll(allDocs.map((e) => e.id));
+                      }
+                    });
+                  },
+                  child: Text(
+                    _selectedMergeDocIds.length == allDocs.length
+                        ? 'Bỏ chọn'
+                        : 'Chọn tất cả',
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (allDocs.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'Chưa có tài liệu nào trong thư viện.',
+                style: TextStyle(fontSize: 12, color: StitchTheme.textSubtle),
+              ),
+            )
+          else
+            ...allDocs.take(4).map((doc) {
+              final checked = _selectedMergeDocIds.contains(doc.id);
+              return GestureDetector(
+                onTap: () {
+                  setState(() {
+                    if (checked) {
+                      _selectedMergeDocIds.remove(doc.id);
+                    } else {
+                      _selectedMergeDocIds.add(doc.id);
+                    }
+                  });
+                },
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 7),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: checked
+                        ? StitchTheme.primaryContainerLight
+                            .withValues(alpha: 0.35)
+                        : StitchTheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(
+                      color: checked
+                          ? StitchTheme.primary.withValues(alpha: 0.3)
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        checked
+                            ? Icons.check_box_rounded
+                            : Icons.check_box_outline_blank_rounded,
+                        size: 20,
+                        color: checked
+                            ? StitchTheme.primary
+                            : StitchTheme.textSubtle,
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(
+                        Icons.picture_as_pdf_rounded,
+                        size: 18,
+                        color: StitchTheme.primary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              doc.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: StitchTheme.textMain,
+                              ),
+                            ),
+                            Text(
+                              '${doc.pageCount} trang • ${doc.folder}',
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                color: StitchTheme.textSubtle,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          const SizedBox(height: 6),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: selectedCount < 2 ? null : _executeInlineMerge,
+              style: FilledButton.styleFrom(
+                backgroundColor: StitchTheme.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              icon: const Icon(Icons.merge_type_rounded, size: 18),
+              label: Text(
+                'Gộp $selectedCount tệp đã chọn ($totalMergePages trang)',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSplitPdfCard({
+    required List<ScanDocument> allDocs,
+    required ScanDocument? splitSourceDoc,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: StitchTheme.borderLight),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF191C1F).withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: StitchTheme.primaryContainerLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.content_cut_rounded,
+                  color: StitchTheme.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tách trang tài liệu (Split PDF)',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: StitchTheme.textMain,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Trích xuất trang lẻ hoặc khoảng trang từ tệp PDF nhiều trang.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (splitSourceDoc != null) ...[
+            DropdownButtonFormField<String>(
+              value: splitSourceDoc.id,
+              isDense: true,
+              decoration: InputDecoration(
+                labelText: 'Tài liệu gốc',
+                filled: true,
+                fillColor: StitchTheme.surfaceContainerLow,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(11),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              items: allDocs
+                  .map(
+                    (d) => DropdownMenuItem(
+                      value: d.id,
+                      child: Text(
+                        '${d.title} (${d.pageCount} trang)',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() => _selectedSplitDocId = val);
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: StitchTheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(11),
+                      border: Border.all(color: StitchTheme.borderLight),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'KHOẢNG TRANG CẦN TÁCH (VD: 1-2, 4)',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w700,
+                            color: StitchTheme.textSubtle,
+                          ),
+                        ),
+                        TextField(
+                          controller: _splitRangeCtrl,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: StitchTheme.textMain,
+                          ),
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.symmetric(vertical: 4),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  onPressed: () => _executeInlineSplit(splitSourceDoc),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: StitchTheme.primaryContainerLight,
+                    foregroundColor: StitchTheme.primary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 15,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  icon: const Icon(Icons.call_split_rounded, size: 18),
+                  label: const Text(
+                    'Tách ngay',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else
+            const Text(
+              'Chưa có tài liệu nào để tách trang.',
+              style: TextStyle(fontSize: 12, color: StitchTheme.textSubtle),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompressAndBenchmarkCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: StitchTheme.borderLight),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _showCompressExportDialog,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  icon: const Icon(Icons.compress_rounded, size: 18),
+                  label: const Text(
+                    'Nén PDF & Khổ giấy',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _runningBenchmark ? null : _runBenchmark,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                  ),
+                  icon: _runningBenchmark
+                      ? const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.fact_check_outlined, size: 18),
+                  label: const Text(
+                    'Kiểm chuẩn 30 mẫu',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildBenchmarkSummaryCard(BenchmarkSummaryReport report) {
-    return Card(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  report.passedEdgeCriterion && report.passedOcrCriterion
-                      ? Icons.verified
-                      : Icons.warning_amber_rounded,
-                  color: report.passedEdgeCriterion && report.passedOcrCriterion
-                      ? Colors.green.shade700
-                      : Colors.orange.shade800,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Kết quả kiểm định: ${report.passedEdgeSamples}/${report.totalSamples} mẫu đạt chuẩn',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '• Độ chính xác góc trung bình: ${(report.averageEdgeSimilarity * 100).toStringAsFixed(1)}% (Mục tiêu: >= 27/30 mẫu)',
-            ),
-            Text(
-              '• Tỷ lệ lỗi ký tự (CER) Tiếng Việt: ${(report.vietnameseCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
-            ),
-            Text(
-              '• Tỷ lệ lỗi ký tự (CER) Tiếng Anh: ${(report.englishCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
-            ),
-          ],
+    return Container(
+      padding: const EdgeInsets.all(14.0),
+      decoration: BoxDecoration(
+        color: StitchTheme.primaryContainerLight.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: StitchTheme.primary.withValues(alpha: 0.25),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                report.passedEdgeCriterion && report.passedOcrCriterion
+                    ? Icons.verified_rounded
+                    : Icons.warning_amber_rounded,
+                color: StitchTheme.primary,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Kết quả kiểm định: ${report.passedEdgeSamples}/${report.totalSamples} mẫu đạt chuẩn',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                  color: StitchTheme.textMain,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '• Độ chính xác góc trung bình: ${(report.averageEdgeSimilarity * 100).toStringAsFixed(1)}% (Mục tiêu: >= 27/30 mẫu)',
+            style: const TextStyle(fontSize: 12),
+          ),
+          Text(
+            '• Tỷ lệ lỗi ký tự (CER) Tiếng Việt: ${(report.vietnameseCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
+            style: const TextStyle(fontSize: 12),
+          ),
+          Text(
+            '• Tỷ lệ lỗi ký tự (CER) Tiếng Anh: ${(report.englishCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
+            style: const TextStyle(fontSize: 12),
+          ),
+        ],
       ),
     );
   }
 }
-

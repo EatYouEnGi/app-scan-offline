@@ -73,7 +73,10 @@ class AppState extends ChangeNotifier {
   String? get lastError => _lastError;
 
   bool get biometricLockEnabled => _biometricLockEnabled;
+  bool get biometricEnabled => _biometricLockEnabled;
   bool get isLocked => _isLocked;
+
+  final Set<String> _customFolders = <String>{};
 
   List<String> get availableFolders {
     final set = <String>{
@@ -82,6 +85,7 @@ class AppState extends ChangeNotifier {
       'Hợp đồng & Pháp lý',
       'CCCD & Giấy tờ tùy thân',
       'Tài liệu học tập',
+      ..._customFolders,
     };
     for (final doc in _documents) {
       if (doc.folder.trim().isNotEmpty) {
@@ -89,6 +93,14 @@ class AppState extends ChangeNotifier {
       }
     }
     return set.toList();
+  }
+
+  void addCustomFolder(String folderName) {
+    final trimmed = folderName.trim();
+    if (trimmed.isEmpty) return;
+    _customFolders.add(trimmed);
+    _selectedFolder = trimmed;
+    refreshLibrary();
   }
 
   List<String> get availableTags {
@@ -145,6 +157,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setBiometricLockEnabled(bool enabled) =>
+      toggleBiometricLock(enabled);
+
   void clearError() {
     _lastError = null;
     notifyListeners();
@@ -168,6 +183,22 @@ class AppState extends ChangeNotifier {
   Future<void> setFolderFilter(String folder) async {
     _selectedFolder = folder;
     await refreshLibrary();
+  }
+
+  Future<void> setSelectedFolder(String folder) => setFolderFilter(folder);
+
+  Future<ScanDocument> createDocumentFromImages({
+    required List<String> sourceImagePaths,
+    bool alreadyCroppedByAi = false,
+    String? customTitle,
+  }) async {
+    final draft = await startNewDraft(customTitle: customTitle);
+    final populated = await addImagesToDocument(
+      document: draft,
+      sourceImagePaths: sourceImagePaths,
+      alreadyCroppedByAi: alreadyCroppedByAi,
+    );
+    return finalizeDocument(populated);
   }
 
   Future<void> setTagFilter(String? tag) async {
