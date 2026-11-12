@@ -663,13 +663,13 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  /// Chia sẻ toàn bộ nội dung văn bản OCR qua các ứng dụng nhắn tin/email/ghi chú.
-  Future<void> shareOcrText(ScanDocument document) async {
-    final text = document.combinedOcrText.trim();
-    if (text.isEmpty) return;
+  /// Chia sẻ nội dung văn bản OCR qua các ứng dụng nhắn tin/email/ghi chú.
+  Future<void> shareOcrText(String text, {String? subject}) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
     await Share.share(
-      text,
-      subject: '${document.title} - Văn bản OCR',
+      trimmed,
+      subject: subject ?? 'Văn bản OCR',
       sharePositionOrigin: const Rect.fromLTWH(0, 0, 300, 300),
     );
   }

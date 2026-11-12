@@ -88,6 +88,7 @@ jobs:
 
       - name: Bootstrap complete iOS Xcode project & apply custom Podfile/Info.plist/Swift Vision bridge
         run: |
+          flutter config --no-enable-swift-package-manager
           cp -r ios /tmp/custom_ios
           rm -rf android ios
           flutter create . --platforms=ios --org com.appscan.offline --project-name app_scan
