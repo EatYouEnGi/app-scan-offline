@@ -35,6 +35,7 @@ jobs:
           cp -r android /tmp/custom_android
           rm -rf android ios
           flutter create . --platforms=android,ios --org com.appscan.offline --project-name app_scan
+          rm -f android/app/build.gradle.kts
           cp /tmp/custom_android/gradle.properties android/gradle.properties
           cp /tmp/custom_android/app/build.gradle android/app/build.gradle
           cp /tmp/custom_android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
