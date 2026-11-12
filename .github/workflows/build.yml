@@ -101,15 +101,24 @@ jobs:
         working-directory: ios
         run: pod install --repo-update
 
-      - name: Build iOS Release Bundle
-        run: flutter build ios --release --no-codesign
+      - name: Build iOS Release Bundle (Optimized for Free Apple ID / Sideloadly Real Device Testing)
+        run: |
+          # iOS sử dụng trực tiếp Apple Vision Neural Engine (vi-VT), không cần gói 12.4MB tessdata của Android
+          : > assets/tessdata/vie.traineddata
+          flutter build ios --release --no-codesign
 
-      - name: Package Runner.app into AppScan-iOS.ipa
+      - name: Package Runner.app into AppScan-iOS.ipa (Ad-Hoc signed for Sideloadly / 3uTools)
         run: |
           mkdir -p build/ios/ipa_out/Payload
-          cp -r build/ios/iphoneos/Runner.app build/ios/ipa_out/Payload/
+          ditto build/ios/iphoneos/Runner.app build/ios/ipa_out/Payload/Runner.app
+          for fw in build/ios/ipa_out/Payload/Runner.app/Frameworks/*.framework; do
+            if [ -d "$fw" ]; then
+              codesign --force --sign - --timestamp=none "$fw"
+            fi
+          done
+          codesign --force --sign - --timestamp=none build/ios/ipa_out/Payload/Runner.app
           cd build/ios/ipa_out
-          zip -r -9 AppScan-iOS-16Plus.ipa Payload
+          ditto -c -k --sequesterRsrc --keepParent Payload AppScan-iOS-16Plus.ipa
 
       - name: Upload iOS IPA Artifact
         uses: actions/upload-artifact@v4

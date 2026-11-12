@@ -27,7 +27,7 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 flutter_ios_podfile_setup
 
 target 'Runner' do
-  use_frameworks!
+  use_frameworks! :linkage => :static
   use_modular_headers!
 
   # Plugin google_mlkit_text_recognition tự động đóng gói GoogleMLKit/TextRecognition (Latin model)
