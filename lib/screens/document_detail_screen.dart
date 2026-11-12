@@ -9,10 +9,9 @@ import 'page_editor_screen.dart';
 import 'scanner_screen.dart';
 
 /// Màn hình chi tiết tài liệu nhiều trang:
-/// - Quản lý trang: thêm, xóa, kéo thả đổi thứ tự, chụp lại, chỉnh 4 góc/bộ lọc/chữ ký.
-/// - Xem và tìm kiếm nội dung OCR tiếng Việt/Anh trên toàn bộ các trang.
-/// - Đổi tên, chọn thư mục, gắn thẻ (tags).
-/// - Xuất PDF có lớp chữ tìm kiếm được (chọn khổ giấy & mức nén) hoặc chia sẻ bộ ảnh.
+/// - Quản lý trang: thêm, xóa, kéo thả đổi thứ tự, chụp lại AI, chỉnh 4 góc/bộ lọc/chữ ký.
+/// - Xem, chỉnh sửa, quét lại AI OCR tiếng Việt/chữ viết tay và tìm kiếm nội dung OCR.
+/// - Xuất & chia sẻ đầy đủ qua các ứng dụng khác (PDF có lớp chữ tiếng Việt, bộ ảnh JPG, lưu thư mục máy, xem trước/in, chia sẻ văn bản OCR).
 class DocumentDetailScreen extends StatefulWidget {
   final AppState appState;
   final ScanDocument initialDocument;
@@ -46,11 +45,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   }
 
   Future<void> _scanMorePages() async {
-    final captured = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
-        builder: (_) => const ScannerScreen(),
-      ),
-    );
+    List<String>? captured = await widget.appState.launchNativeAiScanner(maxPages: 20);
+    if (captured == null && mounted) {
+      captured = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(
+          builder: (_) => const ScannerScreen(),
+        ),
+      );
+    }
     if (captured == null || captured.isEmpty || !mounted) return;
     final updated = await widget.appState.addImagesToDocument(
       document: _doc,
@@ -74,11 +76,14 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   }
 
   Future<void> _retakeSinglePage(ScanPage page) async {
-    final captured = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
-        builder: (_) => const ScannerScreen(singleShotMode: true),
-      ),
-    );
+    List<String>? captured = await widget.appState.launchNativeAiScanner(maxPages: 1);
+    if (captured == null && mounted) {
+      captured = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(
+          builder: (_) => const ScannerScreen(singleShotMode: true),
+        ),
+      );
+    }
     if (captured == null || captured.isEmpty || !mounted) return;
     await widget.appState.retakePage(
       oldPage: page,
@@ -97,6 +102,62 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       ),
     );
     await _reloadDoc();
+  }
+
+  Future<void> _rerunPageAiOcr(ScanPage page) async {
+    await widget.appState.rerunPageAiOcr(page);
+    await _reloadDoc();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Đã nhận diện lại AI OCR (Tiếng Việt & Chữ viết tay) cho Trang ${page.pageIndex + 1}.',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editPageOcrDialog(ScanPage page) async {
+    final ctrl = TextEditingController(text: page.ocrResult?.fullText ?? '');
+    final savedText = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Chỉnh sửa văn bản OCR (Trang ${page.pageIndex + 1})'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: ctrl,
+            maxLines: 10,
+            decoration: const InputDecoration(
+              hintText: 'Nhập hoặc chỉnh sửa văn bản OCR...',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Hủy'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text),
+            icon: const Icon(Icons.check_rounded, size: 18),
+            label: const Text('Lưu văn bản'),
+          ),
+        ],
+      ),
+    );
+    if (savedText == null || !mounted) return;
+    await widget.appState.updatePageOcrText(page: page, editedText: savedText);
+    await _reloadDoc();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Đã cập nhật văn bản OCR cho trang.'),
+        ),
+      );
+    }
   }
 
   Future<void> _editMetadataDialog() async {
@@ -205,102 +266,205 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Xuất & Chia sẻ tài liệu (${_doc.pageCount} trang)',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            Icons.ios_share_rounded,
+                            color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          ),
                         ),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'PDF xuất ra có nhúng sẵn lớp văn bản OCR ẩn giúp tìm kiếm và sao chép chữ.',
-                    style: TextStyle(fontSize: 13, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<PaperSizePreset>(
-                    value: selectedPaper,
-                    decoration: const InputDecoration(
-                      labelText: 'Khổ giấy PDF',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: PaperSizePreset.values
-                        .map(
-                          (p) => DropdownMenuItem(
-                            value: p,
-                            child: Text(p.label),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Xuất & Chia sẻ tài liệu (${_doc.pageCount} trang)',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              const Text(
+                                'Hỗ trợ chia sẻ sang Zalo, Gmail, Messenger, Drive, AirDrop hoặc lưu vào máy',
+                                style: TextStyle(fontSize: 12, color: Colors.black54),
+                              ),
+                            ],
                           ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setSheetState(() => selectedPaper = v);
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<PdfQualityPreset>(
-                    value: selectedQuality,
-                    decoration: const InputDecoration(
-                      labelText: 'Mức nén & Chất lượng',
-                      border: OutlineInputBorder(),
+                        ),
+                      ],
                     ),
-                    items: PdfQualityPreset.values
-                        .map(
-                          (q) => DropdownMenuItem(
-                            value: q,
-                            child: Text(q.label),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<PaperSizePreset>(
+                            value: selectedPaper,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Khổ giấy PDF',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: PaperSizePreset.values
+                                .map(
+                                  (p) => DropdownMenuItem(
+                                    value: p,
+                                    child: Text(
+                                      p.label,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) {
+                                setSheetState(() => selectedPaper = v);
+                              }
+                            },
                           ),
-                        )
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) setSheetState(() => selectedQuality = v);
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () async {
-                            Navigator.of(ctx).pop();
-                            await widget.appState.shareDocumentImages(_doc);
-                          },
-                          icon: const Icon(Icons.image_outlined),
-                          label: const Text('Xuất bộ ảnh JPG'),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: DropdownButtonFormField<PdfQualityPreset>(
+                            value: selectedQuality,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Chất lượng PDF',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: PdfQualityPreset.values
+                                .map(
+                                  (q) => DropdownMenuItem(
+                                    value: q,
+                                    child: Text(
+                                      q.label,
+                                      style: const TextStyle(fontSize: 13),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) {
+                                setSheetState(() => selectedQuality = v);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.of(ctx).pop();
+                          await widget.appState.exportSearchablePdf(
+                            document: _doc,
+                            paperSize: selectedPaper,
+                            quality: selectedQuality,
+                            openShareSheet: true,
+                          );
+                          await _reloadDoc();
+                        },
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                        ),
+                        icon: const Icon(Icons.share_rounded, size: 20),
+                        label: const Text(
+                          'Chia sẻ file PDF qua ứng dụng khác (Zalo, Gmail...)',
+                          style: TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () async {
-                            Navigator.of(ctx).pop();
-                            final pdfPath =
-                                await widget.appState.exportSearchablePdf(
-                              document: _doc,
-                              paperSize: selectedPaper,
-                              quality: selectedQuality,
-                              openShareSheet: true,
-                            );
-                            await _reloadDoc();
-                            if (mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('Đã tạo tệp PDF: $pdfPath'),
-                                ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              final savedPath = await widget.appState
+                                  .savePdfToDeviceFolder(
+                                document: _doc,
+                                paperSize: selectedPaper,
+                                quality: selectedQuality,
                               );
-                            }
-                          },
-                          icon: const Icon(Icons.picture_as_pdf),
-                          label: const Text('Xuất PDF'),
+                              await _reloadDoc();
+                              if (savedPath != null && mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Đã lưu PDF vào máy: $savedPath'),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.download_rounded, size: 18),
+                            label: const Text('Lưu PDF vào máy'),
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              await widget.appState.previewAndPrintPdf(
+                                document: _doc,
+                                paperSize: selectedPaper,
+                                quality: selectedQuality,
+                              );
+                            },
+                            icon: const Icon(Icons.print_outlined, size: 18),
+                            label: const Text('Xem & In PDF'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              Navigator.of(ctx).pop();
+                              await widget.appState.shareDocumentImages(_doc);
+                            },
+                            icon: const Icon(Icons.collections_outlined, size: 18),
+                            label: const Text('Chia sẻ ảnh JPG'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _doc.combinedOcrText.trim().isEmpty
+                                ? null
+                                : () async {
+                                    Navigator.of(ctx).pop();
+                                    await widget.appState.shareOcrText(
+                                      _doc.combinedOcrText,
+                                      subject: _doc.title,
+                                    );
+                                  },
+                            icon: const Icon(Icons.subject_rounded, size: 18),
+                            label: const Text('Chia sẻ chữ OCR'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -311,38 +475,48 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: GestureDetector(
+          titleSpacing: 4,
+          title: InkWell(
             onTap: _editMetadataDialog,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        _doc.title,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 17),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _doc.title,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(Icons.edit_outlined, size: 16),
-                  ],
-                ),
-                Text(
-                  '${_doc.folder} • ${_doc.pageCount} trang${_doc.isDraft ? ' (Bản nháp)' : ''}',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
+                      const SizedBox(width: 6),
+                      const Icon(Icons.edit_outlined, size: 15),
+                    ],
+                  ),
+                  Text(
+                    '${_doc.folder} • ${_doc.pageCount} trang${_doc.isDraft ? ' (Bản nháp)' : ''}',
+                    style: TextStyle(fontSize: 11.5, color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
             ),
           ),
           actions: [
             if (_doc.isDraft)
-              TextButton.icon(
+              IconButton(
                 onPressed: () async {
                   final saved = await widget.appState.finalizeDocument(_doc);
                   if (mounted) {
@@ -354,24 +528,39 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     );
                   }
                 },
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Lưu'),
+                tooltip: 'Lưu chính thức',
+                icon: const Icon(Icons.check_circle_outline_rounded),
               ),
             IconButton(
               onPressed: _showExportModal,
-              tooltip: 'Xuất PDF hoặc chia sẻ ảnh',
-              icon: const Icon(Icons.ios_share),
+              tooltip: 'Xuất & Chia sẻ qua ứng dụng khác',
+              icon: const Icon(Icons.ios_share_rounded),
             ),
+            const SizedBox(width: 4),
           ],
           bottom: const TabBar(
             tabs: [
               Tab(
-                icon: Icon(Icons.burst_mode_outlined),
-                text: 'Các trang & Sắp xếp',
+                height: 42,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.grid_view_rounded, size: 18),
+                    SizedBox(width: 6),
+                    Text('Các trang'),
+                  ],
+                ),
               ),
               Tab(
-                icon: Icon(Icons.manage_search),
-                text: 'Văn bản OCR (Việt/Anh)',
+                height: 42,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, size: 18),
+                    SizedBox(width: 6),
+                    Text('Văn bản AI OCR'),
+                  ],
+                ),
               ),
             ],
           ),
@@ -393,6 +582,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     alignment: Alignment.center,
                     child: Card(
                       margin: const EdgeInsets.symmetric(horizontal: 32),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                       child: Padding(
                         padding: const EdgeInsets.all(20.0),
                         child: Column(
@@ -414,31 +606,52 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           },
         ),
         bottomNavigationBar: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            decoration: BoxDecoration(
+              color: cs.surface,
+              border: Border(
+                top: BorderSide(color: cs.outlineVariant.withOpacity(0.45)),
+              ),
+            ),
             child: Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _importMoreImagesFromGallery,
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    label: const Text('Thêm ảnh'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.photo_library_outlined, size: 18),
+                    label: const Text('Thêm ảnh', style: TextStyle(fontSize: 13)),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _scanMorePages,
-                    icon: const Icon(Icons.camera_alt_outlined),
-                    label: const Text('Chụp thêm trang'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.document_scanner_outlined, size: 18),
+                    label: const Text('Quét thêm', style: TextStyle(fontSize: 13)),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: _showExportModal,
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Xuất PDF'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    icon: const Icon(Icons.ios_share_rounded, size: 18),
+                    label: const Text(
+                      'Xuất / Chia sẻ',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
               ],
@@ -455,7 +668,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
 
     if (sortedPages.isEmpty) {
       return const Center(
-        child: Text('Tài liệu chưa có trang nào. Hãy bấm Chụp thêm trang hoặc Thêm ảnh.'),
+        child: Text('Tài liệu chưa có trang nào. Hãy bấm Quét thêm hoặc Thêm ảnh.'),
       );
     }
 
@@ -464,30 +677,37 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         if (_doc.tags.isNotEmpty)
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             child: Wrap(
               spacing: 6,
               runSpacing: 4,
               children: _doc.tags
                   .map(
                     (t) => Chip(
-                      label: Text('#$t', style: const TextStyle(fontSize: 12)),
+                      label: Text('#$t', style: const TextStyle(fontSize: 11.5)),
                       visualDensity: VisualDensity.compact,
                     ),
                   )
                   .toList(),
             ),
           ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
           child: Row(
             children: [
-              Icon(Icons.drag_indicator, size: 16, color: Colors.grey),
-              SizedBox(width: 6),
+              Icon(
+                Icons.touch_app_outlined,
+                size: 15,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Nhấn vào trang để cắt góc/lọc/ký tên. Nhấn giữ biểu tượng kéo bên phải để đổi thứ tự trang.',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                  'Chạm vào trang để sửa/lọc/ký tên • Giữ biểu tượng ☰ để đổi thứ tự trang',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],
@@ -495,7 +715,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         ),
         Expanded(
           child: ReorderableListView.builder(
-            padding: const EdgeInsets.fromLTRB(14, 4, 14, 24),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
             itemCount: sortedPages.length,
             onReorder: (oldIndex, newIndex) async {
               final updated = await widget.appState.reorderPages(
@@ -511,13 +731,19 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               final page = sortedPages[index];
               final imgFile = File(page.displayImagePath);
               final ocrPreview = page.ocrResult?.fullText.trim() ?? '';
+              final cs = Theme.of(context).colorScheme;
 
               return Card(
                 key: ValueKey(page.id),
-                margin: const EdgeInsets.symmetric(vertical: 6),
+                margin: const EdgeInsets.symmetric(vertical: 5),
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: cs.outlineVariant.withOpacity(0.55)),
+                ),
                 child: InkWell(
                   onTap: () => _openPageEditor(page),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
                   child: Padding(
                     padding: const EdgeInsets.all(10.0),
                     child: Row(
@@ -525,8 +751,8 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
                           child: SizedBox(
-                            width: 68,
-                            height: 92,
+                            width: 66,
+                            height: 88,
                             child: imgFile.existsSync()
                                 ? Image.file(
                                     imgFile,
@@ -534,8 +760,8 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                     fit: BoxFit.cover,
                                   )
                                 : Container(
-                                    color: Colors.grey.shade300,
-                                    child: const Icon(Icons.broken_image),
+                                    color: cs.surfaceContainerHighest,
+                                    child: const Icon(Icons.broken_image_outlined),
                                   ),
                           ),
                         ),
@@ -552,75 +778,71 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                       vertical: 2,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primaryContainer,
+                                      color: cs.primaryContainer,
                                       borderRadius: BorderRadius.circular(6),
                                     ),
                                     child: Text(
                                       'Trang ${index + 1}',
                                       style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 12,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onPrimaryContainer,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 11.5,
+                                        color: cs.onPrimaryContainer,
                                       ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
                                     page.filter.label,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.black54,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: cs.onSurfaceVariant,
                                     ),
                                   ),
                                   if (page.annotations.isNotEmpty) ...[
                                     const SizedBox(width: 6),
-                                    const Icon(
-                                      Icons.draw,
+                                    Icon(
+                                      Icons.draw_rounded,
                                       size: 14,
-                                      color: Colors.indigo,
+                                      color: cs.primary,
                                     ),
                                   ],
                                 ],
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 5),
                               Text(
                                 ocrPreview.isEmpty
-                                    ? 'Chưa có văn bản OCR trên trang này'
+                                    ? 'Chưa có văn bản OCR — bấm biểu tượng AI ✨ để nhận diện'
                                     : ocrPreview,
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 12.5,
                                   color: ocrPreview.isEmpty
-                                      ? Colors.grey
-                                      : Colors.black87,
+                                      ? cs.onSurfaceVariant
+                                      : cs.onSurface,
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 4,
+                              const SizedBox(height: 4),
+                              Row(
                                 children: [
-                                  TextButton.icon(
-                                    onPressed: () => _openPageEditor(page),
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    icon: const Icon(Icons.crop_rotate, size: 16),
-                                    label: const Text('Sửa & Lọc'),
+                                  _compactPageActionBtn(
+                                    icon: Icons.tune_rounded,
+                                    label: 'Sửa/Lọc',
+                                    onTap: () => _openPageEditor(page),
                                   ),
-                                  TextButton.icon(
-                                    onPressed: () => _retakeSinglePage(page),
-                                    style: TextButton.styleFrom(
-                                      visualDensity: VisualDensity.compact,
-                                    ),
-                                    icon: const Icon(Icons.camera_alt_outlined,
-                                        size: 16),
-                                    label: const Text('Chụp lại'),
+                                  const SizedBox(width: 6),
+                                  _compactPageActionBtn(
+                                    icon: Icons.auto_awesome_rounded,
+                                    label: 'AI OCR',
+                                    onTap: () => _rerunPageAiOcr(page),
                                   ),
+                                  const SizedBox(width: 6),
+                                  _compactPageActionBtn(
+                                    icon: Icons.cameraswitch_outlined,
+                                    label: 'Quét lại',
+                                    onTap: () => _retakeSinglePage(page),
+                                  ),
+                                  const Spacer(),
                                   IconButton(
                                     onPressed: () async {
                                       final updatedDoc = await widget.appState
@@ -632,10 +854,16 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                         setState(() => _doc = updatedDoc);
                                       }
                                     },
-                                    icon: const Icon(
-                                      Icons.delete_outline,
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 30,
+                                      minHeight: 30,
+                                    ),
+                                    icon: Icon(
+                                      Icons.delete_outline_rounded,
                                       size: 18,
-                                      color: Colors.redAccent,
+                                      color: cs.error,
                                     ),
                                     tooltip: 'Xóa trang',
                                   ),
@@ -646,9 +874,13 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                         ),
                         ReorderableDragStartListener(
                           index: index,
-                          child: const Padding(
-                            padding: EdgeInsets.all(8.0),
-                            child: Icon(Icons.drag_handle),
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 4, right: 2),
+                            child: Icon(
+                              Icons.drag_indicator_rounded,
+                              size: 20,
+                              color: cs.onSurfaceVariant,
+                            ),
                           ),
                         ),
                       ],
@@ -660,6 +892,40 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _compactPageActionBtn({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withOpacity(0.65),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: cs.primary),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: cs.onSurface,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -678,7 +944,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
             .toList();
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
         children: [
           Row(
@@ -686,18 +952,22 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
               Expanded(
                 child: TextField(
                   decoration: InputDecoration(
-                    hintText: 'Tìm từ khóa trong văn bản OCR của tài liệu này...',
-                    prefixIcon: const Icon(Icons.search),
+                    hintText: 'Tìm trong văn bản OCR (Tiếng Việt / Viết tay)...',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
                     isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   onChanged: (val) => setState(() => _inDocOcrQuery = val),
                 ),
               ),
-              const SizedBox(width: 10),
-              FilledButton.tonalIcon(
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
                 onPressed: fullText.isEmpty
                     ? null
                     : () {
@@ -708,12 +978,23 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                           ),
                         );
                       },
-                icon: const Icon(Icons.copy, size: 18),
-                label: const Text('Chép hết'),
+                tooltip: 'Sao chép toàn bộ',
+                icon: const Icon(Icons.copy_all_rounded, size: 19),
+              ),
+              const SizedBox(width: 4),
+              IconButton.filledTonal(
+                onPressed: fullText.isEmpty
+                    ? null
+                    : () => widget.appState.shareOcrText(
+                          fullText,
+                          subject: _doc.title,
+                        ),
+                tooltip: 'Chia sẻ toàn bộ văn bản OCR',
+                icon: const Icon(Icons.ios_share_rounded, size: 19),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Expanded(
             child: filteredPages.isEmpty
                 ? const Center(
@@ -725,24 +1006,63 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     itemBuilder: (context, idx) {
                       final page = filteredPages[idx];
                       final text = page.ocrResult?.fullText.trim() ?? '';
+                      final cs = Theme.of(context).colorScheme;
                       return Card(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          side: BorderSide(
+                            color: cs.outlineVariant.withOpacity(0.55),
+                          ),
+                        ),
                         child: Padding(
-                          padding: const EdgeInsets.all(14.0),
+                          padding: const EdgeInsets.all(12.0),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                    'Trang ${page.pageIndex + 1}',
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: cs.primaryContainer,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      'Trang ${page.pageIndex + 1}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 12,
+                                        color: cs.onPrimaryContainer,
+                                      ),
                                     ),
                                   ),
+                                  const Spacer(),
                                   IconButton(
-                                    icon: const Icon(Icons.copy, size: 18),
+                                    icon: const Icon(
+                                      Icons.auto_awesome_rounded,
+                                      size: 18,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip:
+                                        'Nhận diện lại AI OCR (Tiếng Việt & Chữ viết tay)',
+                                    onPressed: () => _rerunPageAiOcr(page),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.edit_note_rounded,
+                                      size: 20,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: 'Chỉnh sửa văn bản OCR',
+                                    onPressed: () => _editPageOcrDialog(page),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.copy_rounded, size: 17),
+                                    visualDensity: VisualDensity.compact,
                                     tooltip: 'Sao chép trang này',
                                     onPressed: text.isEmpty
                                         ? null
@@ -760,16 +1080,34 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                                             );
                                           },
                                   ),
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.share_outlined,
+                                      size: 17,
+                                    ),
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: 'Chia sẻ văn bản trang này',
+                                    onPressed: text.isEmpty
+                                        ? null
+                                        : () => widget.appState.shareOcrText(
+                                              text,
+                                              subject:
+                                                  '${_doc.title} - Trang ${page.pageIndex + 1}',
+                                            ),
+                                  ),
                                 ],
                               ),
-                              const Divider(),
+                              const Divider(height: 14),
                               SelectableText(
                                 text.isEmpty
-                                    ? '(Trang này không có chữ in)'
+                                    ? '(Chưa có chữ trên trang này — bấm biểu tượng ✨ để quét lại bằng AI OCR)'
                                     : text,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
-                                  height: 1.45,
+                                  height: 1.5,
+                                  color: text.isEmpty
+                                      ? cs.onSurfaceVariant
+                                      : cs.onSurface,
                                 ),
                               ),
                             ],

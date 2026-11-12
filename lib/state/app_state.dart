@@ -1,5 +1,10 @@
+import 'dart:io';
+import 'dart:ui';
+import 'package:cunning_document_scanner/cunning_document_scanner.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 
@@ -70,7 +75,6 @@ class AppState extends ChangeNotifier {
   bool get biometricLockEnabled => _biometricLockEnabled;
   bool get isLocked => _isLocked;
 
-  /// Danh sách thư mục sẵn có và các thư mục do người dùng tạo.
   List<String> get availableFolders {
     final set = <String>{
       'Tất cả tài liệu',
@@ -87,7 +91,6 @@ class AppState extends ChangeNotifier {
     return set.toList();
   }
 
-  /// Danh sách tất cả các thẻ (tags) đang có trong thư viện.
   List<String> get availableTags {
     final set = <String>{};
     for (final doc in _documents) {
@@ -97,7 +100,6 @@ class AppState extends ChangeNotifier {
     return list;
   }
 
-  /// Khởi tạo dữ liệu, kiểm tra khóa sinh trắc học và tìm bản nháp chưa hoàn tất.
   Future<void> initialize() async {
     _setBusy(true, 'Đang khởi tạo kho tài liệu ngoại tuyến...');
     try {
@@ -148,7 +150,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Làm mới danh sách tài liệu theo bộ lọc tìm kiếm và kiểm tra các bản nháp.
   Future<void> refreshLibrary() async {
     _documents = await databaseService.searchDocuments(
       query: _searchQuery,
@@ -174,7 +175,26 @@ class AppState extends ChangeNotifier {
     await refreshLibrary();
   }
 
-  /// Khởi tạo phiên quét nháp mới (tự động lưu SQLite với `isDraft = true`).
+  /// Mở trình quét AI trên thiết bị (Google ML Kit Document Scanner trên Android /
+  /// Apple VisionKit trên iOS): tự động bắt mép giấy mọi góc độ không cần khung,
+  /// tự chụp và làm phẳng trang.
+  Future<List<String>?> launchNativeAiScanner({int maxPages = 100}) async {
+    try {
+      final result = await CunningDocumentScanner.scanDocuments(
+        noOfPages: maxPages,
+        scannerSource: ScannerSource.cameraAndGallery,
+        output: ScanOutput.images,
+        androidScannerMode: AndroidScannerMode.full,
+      );
+      if (result == null || result.images.isEmpty) {
+        return null;
+      }
+      return result.images.toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<ScanDocument> startNewDraft({String? customTitle}) async {
     final now = DateTime.now();
     final formatted = DateFormat('dd/MM/yyyy HH:mm').format(now);
@@ -196,7 +216,6 @@ class AppState extends ChangeNotifier {
     return draft;
   }
 
-  /// Khôi phục một bản nháp bị đóng giữa chừng để tiếp tục chỉnh sửa.
   Future<ScanDocument> resumeDraft(ScanDocument draft) async {
     final latest = await databaseService.getDocumentById(draft.id) ?? draft;
     _activeDraft = latest;
@@ -204,7 +223,6 @@ class AppState extends ChangeNotifier {
     return latest;
   }
 
-  /// Chuyển bản nháp thành tài liệu chính thức trong thư viện.
   Future<ScanDocument> finalizeDocument(ScanDocument doc) async {
     final latest = await databaseService.getDocumentById(doc.id) ?? doc;
     final finalized = latest.copyWith(
@@ -219,17 +237,14 @@ class AppState extends ChangeNotifier {
     return finalized;
   }
 
-  /// Thêm một hoặc nhiều ảnh chụp / ảnh chọn từ thư viện vào tài liệu.
-  /// Tự động:
-  /// 1) Sao chép ảnh vào kho `originals/` bất biến
-  /// 2) Nhận diện 4 góc giấy
-  /// 3) Cắt phối cảnh + áp bộ lọc mặc định (`magicColor`)
-  /// 4) Chạy OCR ngoại tuyến tiếng Việt/Anh
-  /// 5) Lưu tức thì vào SQLite để không mất dữ liệu nếu ứng dụng đóng.
+  /// Thêm một hoặc nhiều ảnh vào tài liệu.
+  /// Nếu `alreadyCroppedByAi = true` (ảnh trả về từ ML Kit Document Scanner / VisionKit),
+  /// giữ nguyên khung trang đã được AI cắt phẳng và chạy OCR kết hợp (Offline + AI).
   Future<ScanDocument> addImagesToDocument({
     required ScanDocument document,
     required List<String> sourceImagePaths,
     ScanFilterType defaultFilter = ScanFilterType.magicColor,
+    bool alreadyCroppedByAi = false,
     bool runOcrImmediately = true,
   }) async {
     var currentDoc =
@@ -239,27 +254,34 @@ class AppState extends ChangeNotifier {
     for (int i = 0; i < sourceImagePaths.length; i++) {
       _setBusy(
         true,
-        'Đang xử lý trang ${i + 1}/${sourceImagePaths.length} (Nhận diện mép & OCR)...',
+        'Đang xử lý AI trang ${i + 1}/${sourceImagePaths.length} (Làm nét & OCR Tiếng Việt)...',
       );
       try {
         final origPath =
             await storageService.importOriginalImage(sourceImagePaths[i]);
-        final detectedQuad =
-            await visionService.detectDocumentCorners(origPath);
+        final detectedQuad = alreadyCroppedByAi
+            ? CropQuad.fullPage()
+            : await visionService.detectDocumentCorners(origPath);
         final pageId = _uuid.v4();
+
+        final appliedFilter =
+            alreadyCroppedByAi ? ScanFilterType.original : defaultFilter;
 
         final processedBytes = await visionService.processPageImage(
           originalImagePath: origPath,
           cropQuad: detectedQuad,
           rotationDegrees: 0,
-          filter: defaultFilter,
+          filter: appliedFilter,
         );
         final procPath =
             await storageService.saveProcessedBytes(pageId, processedBytes);
 
         OcrResult? ocr;
         if (runOcrImmediately) {
-          ocr = await ocrService.recognizePageImage(procPath);
+          ocr = await ocrService.recognizePageImage(
+            procPath,
+            enhanceHandwriting: true,
+          );
         }
 
         final newPage = ScanPage(
@@ -270,7 +292,7 @@ class AppState extends ChangeNotifier {
           processedImagePath: procPath,
           cropQuad: detectedQuad,
           rotationDegrees: 0,
-          filter: defaultFilter,
+          filter: appliedFilter,
           ocrResult: ocr,
           updatedAt: DateTime.now(),
         );
@@ -294,9 +316,7 @@ class AppState extends ChangeNotifier {
     return currentDoc;
   }
 
-  /// Chỉnh sửa không phá hủy (non-destructive) một trang:
-  /// Đọc lại từ `originalImagePath`, áp dụng `cropQuad`, `rotationDegrees`, `filter` mới,
-  /// cập nhật ảnh `processed/` và chạy lại OCR nếu hình học trang thay đổi.
+  /// Chỉnh sửa không phá hủy một trang.
   Future<ScanPage> updatePageTransform({
     required ScanPage page,
     CropQuad? cropQuad,
@@ -305,7 +325,7 @@ class AppState extends ChangeNotifier {
     List<PageAnnotation>? annotations,
     bool rerunOcr = true,
   }) async {
-    _setBusy(true, 'Đang áp dụng chỉnh sửa trang & cập nhật OCR...');
+    _setBusy(true, 'Đang áp dụng chỉnh sửa & nhận dạng OCR...');
     try {
       final newQuad = cropQuad ?? page.cropQuad;
       final newRotation = (rotationDegrees ?? page.rotationDegrees) % 360;
@@ -326,7 +346,10 @@ class AppState extends ChangeNotifier {
 
       OcrResult? updatedOcr = page.ocrResult;
       if (rerunOcr) {
-        updatedOcr = await ocrService.recognizePageImage(newProcessedPath);
+        updatedOcr = await ocrService.recognizePageImage(
+          newProcessedPath,
+          enhanceHandwriting: true,
+        );
       }
 
       final updatedPage = page.copyWith(
@@ -347,26 +370,74 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Chụp lại (Retake) một trang tại đúng vị trí `pageIndex` hiện tại.
+  /// Cho phép người dùng chỉnh sửa trực tiếp văn bản OCR hoặc chạy lại AI OCR.
+  Future<ScanPage> updatePageOcrText({
+    required ScanPage page,
+    required String editedText,
+  }) async {
+    final normalized = OcrService.normalizeVietnameseText(editedText);
+    final updatedOcr = OcrResult(
+      fullText: normalized,
+      boxes: page.ocrResult?.boxes ?? const [],
+      recognizedAt: DateTime.now(),
+      languageHint: 'vi-edited',
+    );
+    final updatedPage = page.copyWith(
+      ocrResult: updatedOcr,
+      updatedAt: DateTime.now(),
+    );
+    await databaseService.upsertPage(updatedPage);
+    await refreshLibrary();
+    return updatedPage;
+  }
+
+  /// Chạy lại AI OCR tăng cường (dành cho chữ viết tay & dấu Tiếng Việt mờ).
+  Future<ScanPage> rerunPageAiOcr(ScanPage page) async {
+    _setBusy(
+      true,
+      'Đang chạy AI OCR tăng cường (Tiếng Việt & Chữ viết tay)...',
+    );
+    try {
+      final ocr = await ocrService.recognizePageImage(
+        page.displayImagePath,
+        enhanceHandwriting: true,
+      );
+      final updatedPage = page.copyWith(
+        ocrResult: ocr,
+        updatedAt: DateTime.now(),
+      );
+      await databaseService.upsertPage(updatedPage);
+      await refreshLibrary();
+      return updatedPage;
+    } finally {
+      _setBusy(false, null);
+    }
+  }
+
   Future<ScanPage> retakePage({
     required ScanPage oldPage,
     required String newSourceImagePath,
+    bool alreadyCroppedByAi = false,
   }) async {
     _setBusy(true, 'Đang thay thế trang chụp lại...');
     try {
       final newOrigPath =
           await storageService.importOriginalImage(newSourceImagePath);
-      final detectedQuad =
-          await visionService.detectDocumentCorners(newOrigPath);
+      final detectedQuad = alreadyCroppedByAi
+          ? CropQuad.fullPage()
+          : await visionService.detectDocumentCorners(newOrigPath);
       final processedBytes = await visionService.processPageImage(
         originalImagePath: newOrigPath,
         cropQuad: detectedQuad,
         rotationDegrees: 0,
-        filter: oldPage.filter,
+        filter: alreadyCroppedByAi ? ScanFilterType.original : oldPage.filter,
       );
       final newProcPath =
           await storageService.saveProcessedBytes(oldPage.id, processedBytes);
-      final ocr = await ocrService.recognizePageImage(newProcPath);
+      final ocr = await ocrService.recognizePageImage(
+        newProcPath,
+        enhanceHandwriting: true,
+      );
 
       await storageService.deletePageFiles(
         originalPath: oldPage.originalImagePath,
@@ -389,7 +460,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Đổi thứ tự trang trong tài liệu (kéo thả).
   Future<ScanDocument> reorderPages(
     ScanDocument doc,
     int oldIndex,
@@ -413,15 +483,15 @@ class AppState extends ChangeNotifier {
     return (await databaseService.getDocumentById(doc.id))!;
   }
 
-  /// Xóa một trang khỏi tài liệu và đánh lại số thứ tự các trang còn lại.
-  Future<ScanDocument?> deletePage(ScanDocument doc, ScanPage pageToDelete) async {
+  Future<ScanDocument?> deletePage(
+    ScanDocument doc,
+    ScanPage pageToDelete,
+  ) async {
     await storageService.deletePageFiles(
       originalPath: pageToDelete.originalImagePath,
       processedPath: pageToDelete.processedImagePath,
     );
-    final remaining = doc.pages
-        .where((p) => p.id != pageToDelete.id)
-        .toList()
+    final remaining = doc.pages.where((p) => p.id != pageToDelete.id).toList()
       ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
 
     if (remaining.isEmpty) {
@@ -434,7 +504,6 @@ class AppState extends ChangeNotifier {
     return databaseService.getDocumentById(doc.id);
   }
 
-  /// Cập nhật tên, thư mục và thẻ (tags) của tài liệu.
   Future<ScanDocument> updateDocumentMetadata({
     required ScanDocument doc,
     String? title,
@@ -453,7 +522,6 @@ class AppState extends ChangeNotifier {
     return updated;
   }
 
-  /// Xóa toàn bộ tài liệu và các tệp ảnh vật lý đi kèm.
   Future<void> deleteDocument(ScanDocument doc) async {
     for (final page in doc.pages) {
       await storageService.deletePageFiles(
@@ -468,14 +536,18 @@ class AppState extends ChangeNotifier {
     await refreshLibrary();
   }
 
-  /// Tạo PDF nhiều trang có lớp chữ OCR ẩn (searchable PDF) và lưu vào vùng xuất cục bộ.
+  // ===========================================================================
+  // XUẤT FILE, LƯU VÀO MÁY, IN ẤN & CHIA SẺ ĐA ỨNG DỤNG (Zalo, Gmail, Drive...)
+  // ===========================================================================
+
+  /// Tạo PDF nhiều trang có lớp chữ OCR Tiếng Việt và mở bảng Chia sẻ sang ứng dụng khác.
   Future<String> exportSearchablePdf({
     required ScanDocument document,
     PaperSizePreset paperSize = PaperSizePreset.a4,
     PdfQualityPreset quality = PdfQualityPreset.medium,
     bool openShareSheet = true,
   }) async {
-    _setBusy(true, 'Đang tạo PDF nhiều trang kèm lớp văn bản tìm kiếm...');
+    _setBusy(true, 'Đang tạo tệp PDF nhiều trang chuẩn Tiếng Việt...');
     try {
       final latestDoc =
           await databaseService.getDocumentById(document.id) ?? document;
@@ -497,8 +569,16 @@ class AppState extends ChangeNotifier {
 
       if (openShareSheet) {
         await Share.shareXFiles(
-          [XFile(savedPath, mimeType: 'application/pdf')],
+          [
+            XFile(
+              savedPath,
+              mimeType: 'application/pdf',
+              name: '${_safeFileName(latestDoc.title)}.pdf',
+            ),
+          ],
           subject: latestDoc.title,
+          text: latestDoc.title,
+          sharePositionOrigin: const Rect.fromLTWH(0, 0, 300, 300),
         );
       }
       return savedPath;
@@ -507,22 +587,102 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Xuất các trang của tài liệu dưới dạng tệp ảnh JPG qua trình chia sẻ hệ điều hành.
+  /// Lưu trực tiếp tệp PDF vào thư mục người dùng chọn trên máy (Downloads / Files).
+  Future<String?> savePdfToDeviceFolder({
+    required ScanDocument document,
+    PaperSizePreset paperSize = PaperSizePreset.a4,
+    PdfQualityPreset quality = PdfQualityPreset.medium,
+  }) async {
+    _setBusy(true, 'Đang chuẩn bị tệp PDF để lưu vào thiết bị...');
+    try {
+      final latestDoc =
+          await databaseService.getDocumentById(document.id) ?? document;
+      final pdfBytes = await pdfService.buildSearchablePdf(
+        document: latestDoc,
+        paperSize: paperSize,
+        quality: quality,
+      );
+      final internalPath =
+          await storageService.saveExportedPdf(latestDoc.title, pdfBytes);
+
+      final fileName = '${_safeFileName(latestDoc.title)}.pdf';
+      final userPickedPath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Chọn nơi lưu tệp PDF',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+        bytes: pdfBytes,
+      );
+      return userPickedPath ?? internalPath;
+    } finally {
+      _setBusy(false, null);
+    }
+  }
+
+  /// Xem trước PDF trực quan hoặc In tài liệu qua trình in của hệ điều hành.
+  Future<void> previewAndPrintPdf({
+    required ScanDocument document,
+    PaperSizePreset paperSize = PaperSizePreset.a4,
+    PdfQualityPreset quality = PdfQualityPreset.medium,
+  }) async {
+    final latestDoc =
+        await databaseService.getDocumentById(document.id) ?? document;
+    await Printing.layoutPdf(
+      name: '${_safeFileName(latestDoc.title)}.pdf',
+      onLayout: (_) => pdfService.buildSearchablePdf(
+        document: latestDoc,
+        paperSize: paperSize,
+        quality: quality,
+      ),
+    );
+  }
+
+  /// Chia sẻ bộ ảnh JPG của các trang sang Zalo, Messenger, Gmail, Photos...
   Future<void> shareDocumentImages(ScanDocument document) async {
     final sorted = List<ScanPage>.from(document.pages)
       ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
-    final files = sorted
-        .map((p) => XFile(p.displayImagePath, mimeType: 'image/jpeg'))
-        .toList();
+    final files = <XFile>[];
+    for (int i = 0; i < sorted.length; i++) {
+      final path = sorted[i].displayImagePath;
+      if (File(path).existsSync()) {
+        files.add(
+          XFile(
+            path,
+            mimeType: 'image/jpeg',
+            name: '${_safeFileName(document.title)}_trang_${i + 1}.jpg',
+          ),
+        );
+      }
+    }
     if (files.isEmpty) return;
-    await Share.shareXFiles(files, subject: document.title);
+    await Share.shareXFiles(
+      files,
+      subject: document.title,
+      text: '${document.title} (${files.length} trang)',
+      sharePositionOrigin: const Rect.fromLTWH(0, 0, 300, 300),
+    );
+  }
+
+  /// Chia sẻ toàn bộ nội dung văn bản OCR qua các ứng dụng nhắn tin/email/ghi chú.
+  Future<void> shareOcrText(ScanDocument document) async {
+    final text = document.combinedOcrText.trim();
+    if (text.isEmpty) return;
+    await Share.share(
+      text,
+      subject: '${document.title} - Văn bản OCR',
+      sharePositionOrigin: const Rect.fromLTWH(0, 0, 300, 300),
+    );
+  }
+
+  static String _safeFileName(String title) {
+    final cleaned = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    return cleaned.isEmpty ? 'Tai_lieu_scan' : cleaned;
   }
 
   // ===========================================================================
-  // CÔNG CỤ PDF MỞ RỘNG (GIAI ĐOẠN 4: Nhập PDF, Gộp, Tách)
+  // CÔNG CỤ PDF MỞ RỘNG (Nhập PDF, Gộp, Tách)
   // ===========================================================================
 
-  /// Nhập một tệp PDF có sẵn trên thiết bị thành tài liệu `ScanDocument` có thể chỉnh sửa và OCR.
   Future<ScanDocument> importExistingPdf({
     required String pdfPath,
     required String customTitle,
@@ -538,7 +698,7 @@ class AppState extends ChangeNotifier {
       for (int i = 0; i < pagePngs.length; i++) {
         _setBusy(
           true,
-          'Đang nhập trang PDF ${i + 1}/${pagePngs.length}...',
+          'Đang nhập & OCR trang PDF ${i + 1}/${pagePngs.length}...',
         );
         final origPath =
             await storageService.saveOriginalBytes(pagePngs[i], ext: '.png');
@@ -581,7 +741,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Gộp (Merge) nhiều tài liệu đã chọn thành một tài liệu nhiều trang mới.
   Future<ScanDocument> mergeDocuments({
     required List<ScanDocument> sourceDocuments,
     required String mergedTitle,
@@ -644,7 +803,6 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Tách (Split) các trang được chọn từ một tài liệu thành một tài liệu độc lập.
   Future<ScanDocument> splitDocument({
     required ScanDocument sourceDocument,
     required List<int> selectedPageIndexes,
@@ -715,4 +873,3 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 }
-

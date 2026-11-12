@@ -4,6 +4,11 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>vi</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>vi</string>
+		<string>en</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Scan Tài Liệu</string>
 	<key>CFBundleExecutable</key>
@@ -22,8 +27,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Ứng dụng chỉ sử dụng Camera để chụp và quét trang tài liệu ngay trên thiết bị (không gửi dữ liệu lên mạng).</string>
+	<string>Ứng dụng sử dụng Camera kết hợp AI trên thiết bị để tự động nhận diện mép tài liệu và quét trang giấy.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Ứng dụng cần quyền chọn ảnh tài liệu từ thư viện để cắt góc, lọc màu và tạo PDF ngoại tuyến.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -44,4 +53,3 @@
 	</array>
 </dict>
 </plist>
-

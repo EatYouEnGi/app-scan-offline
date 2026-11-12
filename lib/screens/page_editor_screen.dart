@@ -13,7 +13,7 @@ import '../widgets/signature_pad_dialog.dart';
 /// - Chỉnh 4 góc phối cảnh trực tiếp trên ảnh gốc (`originalImagePath`).
 /// - Xoay 90°, chọn bộ lọc (Gốc, Màu sắc nét, Thang xám, Trắng đen, Tương phản cao).
 /// - Ký tên tay / chèn ghi chú lên trang.
-/// - Xem và sao chép văn bản OCR của trang.
+/// - Xem, chỉnh sửa, quét lại AI OCR (Tiếng Việt & Chữ viết tay) và chia sẻ văn bản OCR.
 class PageEditorScreen extends StatefulWidget {
   final AppState appState;
   final ScanPage initialPage;
@@ -69,7 +69,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     if (!_editingQuad.isValidQuad) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Vùng chọn 4 góc bị tự cắt hoặc quá nhỏ. Vui lòng chỉnh lại 4 góc.'),
+          content: Text(
+            'Vùng chọn 4 góc bị tự cắt hoặc quá nhỏ. Vui lòng chỉnh lại 4 góc.',
+          ),
         ),
       );
       return;
@@ -95,7 +97,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Đã cập nhật trang & nhận dạng lại OCR (Ảnh gốc được giữ nguyên).'),
+            content: Text(
+              'Đã cập nhật trang & nhận dạng lại AI OCR (Ảnh gốc được giữ nguyên).',
+            ),
             duration: Duration(seconds: 2),
           ),
         );
@@ -174,71 +178,165 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   }
 
   void _showOcrSheet() {
-    final ocrText = _page.ocrResult?.fullText ?? '';
+    final textCtrl = TextEditingController(text: _page.ocrResult?.fullText ?? '');
+    bool isEditing = false;
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       builder: (ctx) {
-        return DraggableScrollableSheet(
-          expand: false,
-          initialChildSize: 0.55,
-          maxChildSize: 0.9,
-          builder: (_, scrollController) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final currentText = textCtrl.text.trim();
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.62,
+              maxChildSize: 0.92,
+              builder: (_, scrollController) {
+                return Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    18,
+                    4,
+                    18,
+                    MediaQuery.of(ctx).viewInsets.bottom + 20,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Văn bản OCR (Trang ${_page.pageIndex + 1})',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
+                      Row(
+                        children: [
+                          const Icon(Icons.auto_awesome_rounded, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'AI OCR Trang ${_page.pageIndex + 1}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
                             ),
+                          ),
+                          IconButton(
+                            onPressed: () async {
+                              final updated =
+                                  await widget.appState.rerunPageAiOcr(_page);
+                              if (!mounted) return;
+                              setState(() => _page = updated);
+                              setSheetState(() {
+                                textCtrl.text =
+                                    updated.ocrResult?.fullText ?? '';
+                              });
+                            },
+                            tooltip:
+                                'Quét lại bằng AI OCR (Tiếng Việt & Chữ viết tay)',
+                            icon: const Icon(Icons.refresh_rounded, size: 20),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              setSheetState(() => isEditing = !isEditing);
+                            },
+                            tooltip: isEditing ? 'Xem văn bản' : 'Sửa văn bản',
+                            icon: Icon(
+                              isEditing
+                                  ? Icons.visibility_outlined
+                                  : Icons.edit_note_rounded,
+                              size: 21,
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: currentText.isEmpty
+                                ? null
+                                : () {
+                                    Clipboard.setData(
+                                      ClipboardData(text: currentText),
+                                    );
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Đã sao chép văn bản OCR vào bộ nhớ tạm.',
+                                        ),
+                                      ),
+                                    );
+                                  },
+                            tooltip: 'Sao chép',
+                            icon: const Icon(Icons.copy_rounded, size: 19),
+                          ),
+                          IconButton(
+                            onPressed: currentText.isEmpty
+                                ? null
+                                : () => widget.appState.shareOcrText(
+                                      currentText,
+                                      subject: 'OCR Trang ${_page.pageIndex + 1}',
+                                    ),
+                            tooltip: 'Chia sẻ văn bản',
+                            icon: const Icon(Icons.ios_share_rounded, size: 19),
+                          ),
+                        ],
                       ),
-                      FilledButton.tonalIcon(
-                        onPressed: ocrText.isEmpty
-                            ? null
-                            : () {
-                                Clipboard.setData(ClipboardData(text: ocrText));
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Đã sao chép văn bản OCR vào bộ nhớ tạm.'),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: isEditing
+                            ? TextField(
+                                controller: textCtrl,
+                                maxLines: null,
+                                expands: true,
+                                textAlignVertical: TextAlignVertical.top,
+                                decoration: InputDecoration(
+                                  hintText:
+                                      'Chỉnh sửa văn bản Tiếng Việt / chữ viết tay...',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                );
-                              },
-                        icon: const Icon(Icons.copy, size: 18),
-                        label: const Text('Sao chép'),
+                                ),
+                              )
+                            : Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: SingleChildScrollView(
+                                  controller: scrollController,
+                                  child: SelectableText(
+                                    currentText.isEmpty
+                                        ? '(Chưa phát hiện văn bản trên trang này — bấm nút làm mới ↻ để quét lại bằng AI OCR)'
+                                        : currentText,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ),
+                              ),
                       ),
+                      if (isEditing) ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: () async {
+                              final updated = await widget.appState
+                                  .updatePageOcrText(
+                                page: _page,
+                                editedText: textCtrl.text,
+                              );
+                              if (!mounted) return;
+                              setState(() => _page = updated);
+                              setSheetState(() => isEditing = false);
+                            },
+                            icon: const Icon(Icons.save_outlined, size: 18),
+                            label: const Text('Lưu văn bản đã chỉnh sửa'),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        child: SelectableText(
-                          ocrText.isEmpty
-                              ? '(Chưa phát hiện văn bản in trên trang này)'
-                              : ocrText,
-                          style: const TextStyle(fontSize: 15, height: 1.45),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             );
           },
         );
@@ -256,14 +354,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         title: Text(
           _isCropMode
               ? 'Chỉnh 4 góc & Phối cảnh'
-              : 'Chỉnh sửa Trang ${_page.pageIndex + 1}',
-          style: const TextStyle(fontSize: 17),
+              : 'Trang ${_page.pageIndex + 1}',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         actions: [
           IconButton(
             onPressed: _showOcrSheet,
-            tooltip: 'Xem văn bản OCR',
-            icon: const Icon(Icons.text_snippet_outlined),
+            tooltip: 'Văn bản AI OCR',
+            icon: const Icon(Icons.auto_awesome_rounded, size: 20),
           ),
           const SizedBox(width: 4),
           Padding(
@@ -271,16 +369,19 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             child: FilledButton.icon(
               onPressed:
                   _isSaving ? null : () => _applyChanges(closeAfterSave: true),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               icon: _isSaving
                   ? const SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 15,
+                      height: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(Icons.check, size: 18),
+                  : const Icon(Icons.check_rounded, size: 18),
               label: const Text('Lưu'),
             ),
           ),
@@ -290,7 +391,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         children: [
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.all(14.0),
               child: Center(
                 child: _isCropMode
                     ? _buildCropCanvas()
@@ -341,25 +442,34 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         ),
         const SizedBox(height: 10),
         Wrap(
-          spacing: 10,
+          spacing: 8,
           children: [
             OutlinedButton.icon(
               onPressed: _autoDetectCorners,
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
-              icon: const Icon(Icons.auto_fix_high, size: 18),
-              label: const Text('Tự nhận diện lại mép'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(Icons.auto_fix_high_rounded, size: 17),
+              label: const Text('AI bắt mép giấy'),
             ),
             OutlinedButton.icon(
               onPressed: () {
                 setState(() => _editingQuad = CropQuad.fullPage());
               },
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
-              icon: const Icon(Icons.crop_free, size: 18),
-              label: const Text('Chọn toàn trang'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(Icons.crop_free_rounded, size: 17),
+              label: const Text('Toàn trang'),
             ),
             FilledButton.tonal(
               onPressed: _isSaving ? null : () => _applyChanges(),
-              child: const Text('Áp dụng góc cắt'),
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('Áp dụng'),
             ),
           ],
         ),
@@ -465,10 +575,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
 
   Widget _buildFilterStrip() {
     return Container(
-      height: 62,
+      height: 56,
       color: const Color(0xFF1C2126),
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         scrollDirection: Axis.horizontal,
         itemCount: ScanFilterType.values.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -476,8 +586,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
           final filter = ScanFilterType.values[index];
           final selected = _selectedFilter == filter;
           return ChoiceChip(
-            label: Text(filter.label),
+            label: Text(filter.label, style: const TextStyle(fontSize: 12.5)),
             selected: selected,
+            visualDensity: VisualDensity.compact,
             onSelected: _isSaving
                 ? null
                 : (val) {
@@ -494,20 +605,20 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   Widget _buildBottomActionToolbar() {
     return Container(
       color: const Color(0xFF101316),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: SafeArea(
         top: false,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             _toolbarButton(
-              icon: _isCropMode ? Icons.image_outlined : Icons.crop,
-              label: _isCropMode ? 'Xem kết quả' : 'Cắt 4 góc',
+              icon: _isCropMode ? Icons.image_outlined : Icons.crop_rounded,
+              label: _isCropMode ? 'Xem trang' : 'Cắt 4 góc',
               active: _isCropMode,
               onTap: () => setState(() => _isCropMode = !_isCropMode),
             ),
             _toolbarButton(
-              icon: Icons.rotate_right,
+              icon: Icons.rotate_90_degrees_cw_outlined,
               label: 'Xoay 90°',
               onTap: _isSaving
                   ? null
@@ -528,6 +639,11 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
               label: 'Đóng dấu',
               onTap: _openNoteDialog,
             ),
+            _toolbarButton(
+              icon: Icons.auto_awesome_rounded,
+              label: 'AI OCR',
+              onTap: _showOcrSheet,
+            ),
           ],
         ),
       ),
@@ -543,17 +659,21 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     final color = active ? Colors.tealAccent : Colors.white;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(10),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(height: 4),
+            Icon(icon, color: color, size: 20),
+            const SizedBox(height: 3),
             Text(
               label,
-              style: TextStyle(color: color, fontSize: 12),
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ],
         ),

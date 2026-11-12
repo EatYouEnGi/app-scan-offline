@@ -14,7 +14,7 @@ class AppScanApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Scan Tài Liệu Cá Nhân',
+      title: 'Scan Tài Liệu AI',
       debugShowCheckedModeBanner: false,
       locale: const Locale('vi', 'VN'),
       supportedLocales: const [
@@ -28,19 +28,22 @@ class AppScanApp extends StatelessWidget {
       ],
       theme: ThemeData(
         useMaterial3: true,
+        fontFamily: 'BeVietnamPro',
         colorSchemeSeed: const Color(0xFF00695C),
         brightness: Brightness.light,
         appBarTheme: const AppBarTheme(
           centerTitle: false,
         ),
+        visualDensity: VisualDensity.standard,
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
+        fontFamily: 'BeVietnamPro',
         colorSchemeSeed: const Color(0xFF00897B),
         brightness: Brightness.dark,
+        visualDensity: VisualDensity.standard,
       ),
       home: LibraryScreen(appState: appState),
     );
   }
 }
-

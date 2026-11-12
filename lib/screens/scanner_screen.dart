@@ -1,13 +1,16 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:camera/camera.dart';
+import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../models/scan_models.dart';
 
-/// Màn hình chụp tài liệu bằng Camera:
-/// - Hỗ trợ chế độ Chụp tự động (Auto-scan khi giữ máy ổn định) và Chụp thủ công.
-/// - Cho phép chọn nhiều ảnh từ thư viện hệ điều hành.
-/// - Xử lý an toàn khi người dùng từ chối quyền Camera.
+/// Màn hình Camera AI Quét Tài Liệu:
+/// - KHÔNG dùng khung vùng an toàn cố định.
+/// - Tự động phát hiện tờ giấy/tài liệu ở bất kỳ vị trí nào trên ống kính theo thời gian thực
+///   từ luồng YUV/BGRA của Camera, vẽ đa giác 4 góc bám sát mép giấy thật và tự chụp khi giữ êm.
+/// - Tích hợp nút chuyển nhanh sang trình quét AI gốc của hệ điều hành (ML Kit / VisionKit).
 class ScannerScreen extends StatefulWidget {
   final bool singleShotMode;
 
@@ -27,12 +30,15 @@ class _ScannerScreenState extends State<ScannerScreen>
 
   bool _initializingCamera = true;
   String? _cameraError;
-  bool _autoCaptureEnabled = false;
+  bool _aiAutoCapture = true;
   bool _isTakingPicture = false;
+  bool _isAnalyzingFrame = false;
   FlashMode _flashMode = FlashMode.off;
 
-  Timer? _autoCaptureTimer;
-  int _autoCountdown = 0;
+  /// Đa giác 4 góc của tờ giấy đang được AI phát hiện trực tiếp trên luồng camera.
+  CropQuad? _liveDetectedQuad;
+  int _stableFrameCount = 0;
+  DateTime _lastFrameTime = DateTime.fromMillisecondsSinceEpoch(0);
 
   final List<String> _capturedPaths = [];
 
@@ -46,9 +52,21 @@ class _ScannerScreenState extends State<ScannerScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _autoCaptureTimer?.cancel();
-    _controller?.dispose();
+    _stopStreamAndDispose();
     super.dispose();
+  }
+
+  Future<void> _stopStreamAndDispose() async {
+    final cam = _controller;
+    _controller = null;
+    if (cam != null) {
+      try {
+        if (cam.value.isStreamingImages) {
+          await cam.stopImageStream();
+        }
+      } catch (_) {}
+      await cam.dispose();
+    }
   }
 
   @override
@@ -56,7 +74,7 @@ class _ScannerScreenState extends State<ScannerScreen>
     final cam = _controller;
     if (cam == null || !cam.value.isInitialized) return;
     if (state == AppLifecycleState.inactive) {
-      cam.dispose();
+      _stopStreamAndDispose();
     } else if (state == AppLifecycleState.resumed) {
       _setupCamera();
     }
@@ -74,7 +92,7 @@ class _ScannerScreenState extends State<ScannerScreen>
         setState(() {
           _initializingCamera = false;
           _cameraError =
-              'Không tìm thấy phần cứng Camera trên thiết bị này. Bạn vẫn có thể chọn ảnh tài liệu từ thư viện.';
+              'Thiết bị không có Camera. Bạn có thể chọn ảnh từ thư viện.';
         });
         return;
       }
@@ -88,30 +106,26 @@ class _ScannerScreenState extends State<ScannerScreen>
         backCamera,
         ResolutionPreset.veryHigh,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
+        imageFormatGroup: Platform.isIOS
+            ? ImageFormatGroup.bgra8888
+            : ImageFormatGroup.yuv420,
       );
 
       await controller.initialize();
       await controller.setFlashMode(_flashMode);
+      await controller.startImageStream(_onCameraFrame);
 
       if (!mounted) return;
       setState(() {
         _controller = controller;
         _initializingCamera = false;
       });
-
-      if (_autoCaptureEnabled) {
-        _startAutoCaptureCountdown();
-      }
     } on CameraException catch (e) {
       if (!mounted) return;
-      final isDenied = e.code.toLowerCase().contains('access') ||
-          e.code.toLowerCase().contains('permission');
       setState(() {
         _initializingCamera = false;
-        _cameraError = isDenied
-            ? 'Quyền Camera đã bị từ chối. Vui lòng cấp quyền Camera trong Cài đặt hệ thống hoặc nhập ảnh từ thư viện.'
-            : 'Không thể khởi động Camera (${e.description ?? e.code}).';
+        _cameraError =
+            'Không thể truy cập Camera (${e.description ?? e.code}). Hãy kiểm tra quyền Camera hoặc chọn ảnh từ thư viện.';
       });
     } catch (e) {
       if (!mounted) return;
@@ -122,42 +136,193 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
   }
 
-  void _toggleAutoCapture(bool enabled) {
-    setState(() {
-      _autoCaptureEnabled = enabled;
-    });
-    if (enabled) {
-      _startAutoCaptureCountdown();
-    } else {
-      _autoCaptureTimer?.cancel();
-      setState(() => _autoCountdown = 0);
+  /// Phân tích trực tiếp luồng ảnh Camera (mỗi ~220ms) để tự động tìm 4 góc tờ giấy
+  /// ở bất kỳ đâu trên màn hình mà không cần khung cố định.
+  void _onCameraFrame(CameraImage image) {
+    if (_isAnalyzingFrame || _isTakingPicture || !mounted) return;
+    final now = DateTime.now();
+    if (now.difference(_lastFrameTime).inMilliseconds < 220) return;
+    _lastFrameTime = now;
+    _isAnalyzingFrame = true;
+
+    try {
+      final detected = _detectPaperQuadFromCameraImage(image);
+      if (!mounted) return;
+
+      if (detected != null && detected.isValidQuad) {
+        final prev = _liveDetectedQuad;
+        final isSteady = prev != null && prev.similarityTo(detected) >= 0.94;
+        setState(() {
+          _liveDetectedQuad = prev != null
+              ? _smoothQuad(prev, detected, 0.45)
+              : detected;
+          _stableFrameCount = isSteady ? (_stableFrameCount + 1) : 1;
+        });
+
+        // Khi AI thấy tờ giấy nằm ổn định liên tục ~5 nhịp (~1.1 giây) và bật chế độ AI Tự chụp -> Tự chụp!
+        if (_aiAutoCapture && _stableFrameCount >= 5 && !_isTakingPicture) {
+          _stableFrameCount = 0;
+          _capturePhoto(fromAutoTrigger: true);
+        }
+      } else {
+        if (_liveDetectedQuad != null || _stableFrameCount > 0) {
+          setState(() {
+            _liveDetectedQuad = null;
+            _stableFrameCount = 0;
+          });
+        }
+      }
+    } finally {
+      _isAnalyzingFrame = false;
     }
   }
 
-  void _startAutoCaptureCountdown() {
-    _autoCaptureTimer?.cancel();
-    if (!_autoCaptureEnabled ||
-        _controller == null ||
-        !_controller!.value.isInitialized) {
-      return;
+  CropQuad _smoothQuad(CropQuad oldQ, CropQuad newQ, double alpha) {
+    NormalizedPoint lerpPt(NormalizedPoint a, NormalizedPoint b) {
+      return NormalizedPoint(
+        a.x * (1 - alpha) + b.x * alpha,
+        a.y * (1 - alpha) + b.y * alpha,
+      );
     }
 
-    setState(() => _autoCountdown = 3);
-    _autoCaptureTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted || !_autoCaptureEnabled) {
-        timer.cancel();
-        return;
-      }
-      if (_isTakingPicture) return;
+    return CropQuad(
+      topLeft: lerpPt(oldQ.topLeft, newQ.topLeft),
+      topRight: lerpPt(oldQ.topRight, newQ.topRight),
+      bottomRight: lerpPt(oldQ.bottomRight, newQ.bottomRight),
+      bottomLeft: lerpPt(oldQ.bottomLeft, newQ.bottomLeft),
+    );
+  }
 
-      if (_autoCountdown > 1) {
-        setState(() => _autoCountdown--);
-      } else {
-        timer.cancel();
-        setState(() => _autoCountdown = 0);
-        _capturePhoto(fromAutoTrigger: true);
+  /// Thuật toán AI Vision nhẹ chạy trực tiếp trên kênh độ sáng (Y-plane / BGRA)
+  /// để bắt biên tờ giấy/tài liệu ở bất kỳ vị trí nào trong khung hình.
+  CropQuad? _detectPaperQuadFromCameraImage(CameraImage image) {
+    if (image.planes.isEmpty) return null;
+    final plane = image.planes.first;
+    final bytes = plane.bytes;
+    final rowStride = plane.bytesPerRow;
+    final isBgra = image.format.group == ImageFormatGroup.bgra8888;
+    final step = 8;
+
+    // Trên điện thoại cầm dọc (portrait), cảm biến camera thường xoay 90 độ.
+    final rawW = image.width;
+    final rawH = image.height;
+    final gW = rawW ~/ step;
+    final gH = rawH ~/ step;
+    if (gW < 16 || gH < 16) return null;
+
+    final hist = List<int>.filled(256, 0);
+    final grid = List<int>.filled(gW * gH, 0);
+
+    for (int gy = 0; gy < gH; gy++) {
+      final sy = gy * step;
+      for (int gx = 0; gx < gW; gx++) {
+        final sx = gx * step;
+        final offset = sy * rowStride + (isBgra ? sx * 4 + 1 : sx);
+        if (offset >= 0 && offset < bytes.length) {
+          final luma = bytes[offset];
+          grid[gy * gW + gx] = luma;
+          hist[luma]++;
+        }
       }
-    });
+    }
+
+    // Tính ngưỡng Otsu phân tách vùng giấy sáng.
+    final total = gW * gH;
+    double sum = 0;
+    for (int i = 0; i < 256; i++) {
+      sum += i * hist[i];
+    }
+    double sumB = 0;
+    int wB = 0;
+    double maxVar = 0;
+    int threshold = 145;
+    for (int t = 0; t < 256; t++) {
+      wB += hist[t];
+      if (wB == 0) continue;
+      final wF = total - wB;
+      if (wF == 0) break;
+      sumB += t * hist[t];
+      final mB = sumB / wB;
+      final mF = (sum - sumB) / wF;
+      final between = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF);
+      if (between > maxVar) {
+        maxVar = between;
+        threshold = t;
+      }
+    }
+    threshold = threshold.clamp(85, 225);
+
+    double minSum = double.infinity;
+    double maxSum = -double.infinity;
+    double minDiff = double.infinity;
+    double maxDiff = -double.infinity;
+
+    NormalizedPoint? tl;
+    NormalizedPoint? tr;
+    NormalizedPoint? br;
+    NormalizedPoint? bl;
+    int paperCount = 0;
+    int edgeCount = 0;
+
+    for (int gy = 1; gy < gH - 1; gy++) {
+      for (int gx = 1; gx < gW - 1; gx++) {
+        final idx = gy * gW + gx;
+        final v = grid[idx];
+        if (v >= threshold) {
+          paperCount++;
+          final grad = (grid[idx + 1] - grid[idx - 1]).abs() +
+              (grid[idx + gW] - grid[idx - gW]).abs();
+          if (grad > 22) {
+            edgeCount++;
+            // Chuyển tọa độ cảm biến ngang sang khung hiển thị dọc của điện thoại.
+            final double nx = Platform.isIOS
+                ? gx / (gW - 1)
+                : 1.0 - (gy / (gH - 1));
+            final double ny = Platform.isIOS
+                ? gy / (gH - 1)
+                : gx / (gW - 1);
+
+            final s = nx + ny;
+            final d = nx - ny;
+            if (s < minSum) {
+              minSum = s;
+              tl = NormalizedPoint(nx, ny);
+            }
+            if (s > maxSum) {
+              maxSum = s;
+              br = NormalizedPoint(nx, ny);
+            }
+            if (d > maxDiff) {
+              maxDiff = d;
+              tr = NormalizedPoint(nx, ny);
+            }
+            if (d < minDiff) {
+              minDiff = d;
+              bl = NormalizedPoint(nx, ny);
+            }
+          }
+        }
+      }
+    }
+
+    final ratio = paperCount / total;
+    if (tl == null ||
+        tr == null ||
+        br == null ||
+        bl == null ||
+        edgeCount < 14 ||
+        ratio < 0.08 ||
+        ratio > 0.94) {
+      return null;
+    }
+
+    final quad = CropQuad(
+      topLeft: tl.clamp(),
+      topRight: tr.clamp(),
+      bottomRight: br.clamp(),
+      bottomLeft: bl.clamp(),
+    );
+    return (quad.isValidQuad && quad.normalizedArea >= 0.08) ? quad : null;
   }
 
   Future<void> _capturePhoto({bool fromAutoTrigger = false}) async {
@@ -166,6 +331,9 @@ class _ScannerScreenState extends State<ScannerScreen>
 
     setState(() => _isTakingPicture = true);
     try {
+      if (cam.value.isStreamingImages) {
+        await cam.stopImageStream();
+      }
       final XFile photo = await cam.takePicture();
       if (!mounted) return;
 
@@ -176,13 +344,17 @@ class _ScannerScreenState extends State<ScannerScreen>
 
       setState(() {
         _capturedPaths.add(photo.path);
+        _stableFrameCount = 0;
       });
 
-      if (fromAutoTrigger && _autoCaptureEnabled && mounted) {
-        // Nghỉ ngắn để người dùng lật sang trang tiếp theo khi quét tự động.
-        await Future<void>.delayed(const Duration(milliseconds: 1200));
-        if (mounted && _autoCaptureEnabled) {
-          _startAutoCaptureCountdown();
+      if (mounted && _controller != null && _controller!.value.isInitialized) {
+        if (fromAutoTrigger) {
+          await Future<void>.delayed(const Duration(milliseconds: 900));
+        }
+        if (mounted &&
+            _controller != null &&
+            !_controller!.value.isStreamingImages) {
+          await _controller!.startImageStream(_onCameraFrame);
         }
       }
     } catch (e) {
@@ -195,6 +367,27 @@ class _ScannerScreenState extends State<ScannerScreen>
       if (mounted) {
         setState(() => _isTakingPicture = false);
       }
+    }
+  }
+
+  /// Mở trình quét AI gốc của hệ điều hành (Google ML Kit Document Scanner / Apple VisionKit).
+  Future<void> _switchToNativeOsAiScanner() async {
+    try {
+      await _stopStreamAndDispose();
+      final result = await CunningDocumentScanner.scanDocuments(
+        noOfPages: widget.singleShotMode ? 1 : 100,
+        scannerSource: ScannerSource.cameraAndGallery,
+        output: ScanOutput.images,
+        androidScannerMode: AndroidScannerMode.full,
+      );
+      if (!mounted) return;
+      if (result != null && result.images.isNotEmpty) {
+        Navigator.of(context).pop(result.images.toList());
+      } else {
+        await _setupCamera();
+      }
+    } catch (_) {
+      if (mounted) await _setupCamera();
     }
   }
 
@@ -245,30 +438,36 @@ class _ScannerScreenState extends State<ScannerScreen>
         backgroundColor: Colors.black87,
         foregroundColor: Colors.white,
         title: Text(
-          widget.singleShotMode ? 'Chụp lại trang' : 'Quét tài liệu',
-          style: const TextStyle(fontSize: 17),
+          widget.singleShotMode ? 'Quét lại trang' : 'Camera AI Quét Tài Liệu',
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
         actions: [
-          FilterChip(
-            label: Text(
-              _autoCaptureEnabled ? 'Tự động: BẬT' : 'Thủ công',
-              style: const TextStyle(color: Colors.white, fontSize: 12),
-            ),
-            selected: _autoCaptureEnabled,
-            selectedColor: Colors.teal.shade700,
-            backgroundColor: Colors.grey.shade800,
-            checkmarkColor: Colors.white,
-            onSelected: _toggleAutoCapture,
+          IconButton(
+            onPressed: _switchToNativeOsAiScanner,
+            tooltip: 'Mở trình quét AI Hệ thống (ML Kit / VisionKit)',
+            icon: const Icon(Icons.auto_awesome, color: Colors.amberAccent),
           ),
-          const SizedBox(width: 6),
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _aiAutoCapture = !_aiAutoCapture;
+                _stableFrameCount = 0;
+              });
+            },
+            tooltip: _aiAutoCapture ? 'Đang bật AI Tự chụp' : 'Chế độ chụp tay',
+            icon: Icon(
+              _aiAutoCapture ? Icons.motion_photos_auto : Icons.touch_app,
+              color: _aiAutoCapture ? Colors.tealAccent : Colors.white70,
+            ),
+          ),
           IconButton(
             onPressed: _cycleFlashMode,
             tooltip: 'Đèn Flash',
             icon: Icon(
               switch (_flashMode) {
-                FlashMode.off => Icons.flash_off,
-                FlashMode.auto => Icons.flash_auto,
-                _ => Icons.highlight,
+                FlashMode.off => Icons.flash_off_rounded,
+                FlashMode.auto => Icons.flash_auto_rounded,
+                _ => Icons.flashlight_on_rounded,
               },
             ),
           ),
@@ -302,14 +501,14 @@ class _ScannerScreenState extends State<ScannerScreen>
           children: [
             const Icon(
               Icons.no_photography_outlined,
-              size: 64,
+              size: 56,
               color: Colors.amberAccent,
             ),
             const SizedBox(height: 16),
             Text(
               _cameraError ?? 'Camera chưa sẵn sàng.',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
+              style: const TextStyle(color: Colors.white, fontSize: 14),
             ),
             const SizedBox(height: 20),
             Wrap(
@@ -322,12 +521,12 @@ class _ScannerScreenState extends State<ScannerScreen>
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                   ),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Thử cấp quyền lại'),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text('Thử lại'),
                 ),
                 FilledButton.icon(
                   onPressed: _pickFromGallery,
-                  icon: const Icon(Icons.photo_library_outlined),
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
                   label: const Text('Chọn ảnh từ thư viện'),
                 ),
               ],
@@ -337,38 +536,68 @@ class _ScannerScreenState extends State<ScannerScreen>
       );
     }
 
+    final hasDoc = _liveDetectedQuad != null;
+
     return Stack(
       fit: StackFit.expand,
       children: [
         Center(
           child: CameraPreview(_controller!),
         ),
-        // Khung định vị mép tài liệu trực quan.
-        IgnorePointer(
-          child: CustomPaint(
-            painter: _ScannerGuideOverlayPainter(
-              isAutoMode: _autoCaptureEnabled,
+
+        // Vẽ đa giác AI động ôm sát mép tờ giấy thật (hoàn toàn KHÔNG có khung cố định).
+        if (hasDoc)
+          IgnorePointer(
+            child: CustomPaint(
+              painter: _LiveAiDocumentPolygonPainter(
+                quad: _liveDetectedQuad!,
+                stabilityProgress: (_stableFrameCount / 5.0).clamp(0.0, 1.0),
+              ),
             ),
           ),
-        ),
+
+        // Nhãn trạng thái AI nhỏ gọn phía trên.
         Positioned(
-          top: 16,
+          top: 14,
           left: 20,
           right: 20,
           child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
-                color: Colors.black54,
+                color: hasDoc
+                    ? Colors.teal.shade900.withOpacity(0.85)
+                    : Colors.black54,
                 borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: hasDoc ? Colors.tealAccent : Colors.white24,
+                ),
               ),
-              child: Text(
-                _autoCaptureEnabled
-                    ? (_autoCountdown > 0
-                        ? 'Giữ êm máy — Tự động chụp sau $_autoCountdown giây...'
-                        : 'Đang tự động nhận diện mép trang giấy...')
-                    : 'Căn tài liệu vào khung xanh rồi bấm nút chụp',
-                style: const TextStyle(color: Colors.white, fontSize: 13),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    hasDoc ? Icons.auto_awesome : Icons.radar_rounded,
+                    size: 15,
+                    color: hasDoc ? Colors.tealAccent : Colors.white70,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      hasDoc
+                          ? (_aiAutoCapture
+                              ? 'AI đã bắt mép tài liệu — Giữ êm để tự chụp...'
+                              : 'AI đã bắt mép tài liệu — Bấm nút chụp')
+                          : 'Hướng camera vào trang giấy để AI tự nhận diện',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -379,35 +608,32 @@ class _ScannerScreenState extends State<ScannerScreen>
 
   Widget _buildBottomControls() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       color: Colors.black87,
       child: SafeArea(
         top: false,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // Nút chọn nhiều ảnh từ thư viện.
             IconButton.filledTonal(
               onPressed: _pickFromGallery,
-              iconSize: 28,
+              iconSize: 24,
               tooltip: 'Nhập ảnh từ thư viện',
-              icon: const Icon(Icons.photo_library_outlined),
+              icon: const Icon(Icons.photo_library_rounded),
             ),
-
-            // Nút chụp chính.
             GestureDetector(
               onTap: _isTakingPicture ? null : () => _capturePhoto(),
               child: Container(
-                width: 74,
-                height: 74,
-                padding: const EdgeInsets.all(5),
+                width: 70,
+                height: 70,
+                padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: _autoCaptureEnabled
+                    color: _liveDetectedQuad != null
                         ? Colors.tealAccent
                         : Colors.white,
-                    width: 3.5,
+                    width: 3,
                   ),
                 ),
                 child: Container(
@@ -421,15 +647,13 @@ class _ScannerScreenState extends State<ScannerScreen>
                           child: CircularProgressIndicator(strokeWidth: 2.5),
                         )
                       : const Icon(
-                          Icons.camera_alt,
+                          Icons.camera_rounded,
                           color: Colors.black87,
                           size: 30,
                         ),
                 ),
               ),
             ),
-
-            // Nút Hoàn tất phiên chụp nhiều trang.
             if (_capturedPaths.isNotEmpty)
               FilledButton.icon(
                 onPressed: () {
@@ -438,15 +662,19 @@ class _ScannerScreenState extends State<ScannerScreen>
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.tealAccent.shade700,
                   foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                 ),
                 icon: CircleAvatar(
-                  radius: 13,
+                  radius: 12,
                   backgroundImage: FileImage(File(_capturedPaths.last)),
                 ),
                 label: Text('Xong (${_capturedPaths.length})'),
               )
             else
-              const SizedBox(width: 88),
+              const SizedBox(width: 48),
           ],
         ),
       ),
@@ -454,31 +682,50 @@ class _ScannerScreenState extends State<ScannerScreen>
   }
 }
 
-class _ScannerGuideOverlayPainter extends CustomPainter {
-  final bool isAutoMode;
+/// Vẽ đa giác 4 góc ôm sát mép tờ giấy thật khi AI nhận diện được tài liệu.
+class _LiveAiDocumentPolygonPainter extends CustomPainter {
+  final CropQuad quad;
+  final double stabilityProgress;
 
-  _ScannerGuideOverlayPainter({required this.isAutoMode});
+  _LiveAiDocumentPolygonPainter({
+    required this.quad,
+    required this.stabilityProgress,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height / 2),
-      width: size.width * 0.82,
-      height: size.height * 0.74,
-    );
+    final pts = quad.corners
+        .map((p) => Offset(p.x * size.width, p.y * size.height))
+        .toList();
 
-    final paint = Paint()
-      ..color = isAutoMode ? Colors.tealAccent : Colors.white70
-      ..strokeWidth = 2.5
+    final path = Path()
+      ..moveTo(pts[0].dx, pts[0].dy)
+      ..lineTo(pts[1].dx, pts[1].dy)
+      ..lineTo(pts[2].dx, pts[2].dy)
+      ..lineTo(pts[3].dx, pts[3].dy)
+      ..close();
+
+    final fillPaint = Paint()
+      ..color = const Color(0xFF00E676).withOpacity(0.18 + 0.12 * stabilityProgress)
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(path, fillPaint);
+
+    final borderPaint = Paint()
+      ..color = const Color(0xFF00E676)
+      ..strokeWidth = 3.0
+      ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
+    canvas.drawPath(path, borderPaint);
 
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(12));
-    canvas.drawRRect(rrect, paint);
+    for (final pt in pts) {
+      canvas.drawCircle(pt, 6, Paint()..color = Colors.white);
+      canvas.drawCircle(pt, 4, Paint()..color = const Color(0xFF00E676));
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _ScannerGuideOverlayPainter oldDelegate) {
-    return oldDelegate.isAutoMode != isAutoMode;
+  bool shouldRepaint(covariant _LiveAiDocumentPolygonPainter oldDelegate) {
+    return oldDelegate.quad != quad ||
+        oldDelegate.stabilityProgress != stabilityProgress;
   }
 }
-

@@ -39,11 +39,10 @@ android {
 
     defaultConfig {
         applicationId "com.appscan.offline"
-        // Mặc định hỗ trợ Android 10+ (API 29+) theo đúng kế hoạch
         minSdk 29
         targetSdk 34
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 2
+        versionName "1.1.0"
     }
 
     signingConfigs {
@@ -76,8 +75,8 @@ flutter {
 }
 
 dependencies {
-    // Đóng gói trực tiếp mô hình Latin của Google ML Kit Text Recognition v2 vào APK
-    // (Hỗ trợ OCR Tiếng Việt & Tiếng Anh 100% ngoại tuyến không cần tải qua mạng)
+    // 1. Mô hình OCR Latin trên thiết bị của Google ML Kit v2
     implementation "com.google.mlkit:text-recognition:16.0.1"
+    // 2. Động cơ AI Neural LSTM Tesseract 5 chuyên biệt cho dấu Tiếng Việt & chữ viết tay rõ nét
+    implementation "cz.adaptech.tesseract4android:tesseract4android:4.9.0"
 }
-

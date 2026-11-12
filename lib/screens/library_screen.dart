@@ -10,11 +10,10 @@ import 'document_detail_screen.dart';
 import 'pdf_tools_screen.dart';
 import 'scanner_screen.dart';
 
-/// Màn hình chính Thư viện Tài liệu (Giao diện mặc định tiếng Việt):
-/// - Tìm kiếm toàn văn theo tên, thẻ và nội dung chữ OCR bên trong các trang.
-/// - Lọc theo thư mục và thẻ.
-/// - Khôi phục bản nháp tự động nếu ứng dụng bị đóng giữa lúc quét.
-/// - Khóa ứng dụng bằng Face ID / Touch ID / Sinh trắc học Android.
+/// Màn hình chính Thư viện Tài liệu:
+/// - Giao diện gọn gàng, trực quan, biểu tượng nút bấm tinh gọn.
+/// - Quét AI tự động bắt mép giấy (Google ML Kit Document Scanner / Apple VisionKit + Camera AI).
+/// - Chia sẻ PDF/Ảnh trực tiếp sang ứng dụng khác chỉ với 1 chạm.
 class LibraryScreen extends StatefulWidget {
   final AppState appState;
 
@@ -37,18 +36,37 @@ class _LibraryScreenState extends State<LibraryScreen> {
     super.dispose();
   }
 
-  Future<void> _startCameraScan() async {
-    final capturedPaths = await Navigator.of(context).push<List<String>>(
-      MaterialPageRoute(
-        builder: (_) => const ScannerScreen(),
-      ),
-    );
+  /// Ưu tiên mở trình quét AI trên thiết bị (tự động nhận diện giấy không cần khung);
+  /// nếu người dùng muốn dùng camera tích hợp hoặc thiết bị thiếu dịch vụ hệ thống thì mở `ScannerScreen`.
+  Future<void> _startAiScan({bool forceBuiltInCamera = false}) async {
+    List<String>? capturedPaths;
+    bool alreadyCroppedByAi = false;
+
+    if (!forceBuiltInCamera) {
+      capturedPaths = await widget.appState.launchNativeAiScanner();
+      if (capturedPaths != null && capturedPaths.isNotEmpty) {
+        alreadyCroppedByAi = true;
+      }
+    }
+
+    if ((capturedPaths == null || capturedPaths.isEmpty) &&
+        forceBuiltInCamera &&
+        mounted) {
+      capturedPaths = await Navigator.of(context).push<List<String>>(
+        MaterialPageRoute(
+          builder: (_) => const ScannerScreen(),
+        ),
+      );
+      alreadyCroppedByAi = false;
+    }
+
     if (capturedPaths == null || capturedPaths.isEmpty || !mounted) return;
 
     final draft = await widget.appState.startNewDraft();
     final populated = await widget.appState.addImagesToDocument(
       document: draft,
       sourceImagePaths: capturedPaths,
+      alreadyCroppedByAi: alreadyCroppedByAi,
     );
     final finalized = await widget.appState.finalizeDocument(populated);
 
@@ -100,7 +118,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Bảo mật & Chế độ Ngoại tuyến',
+                    'Bảo mật & Công nghệ AI Nội bộ',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
@@ -108,12 +126,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
-                    secondary: const Icon(Icons.fingerprint, size: 28),
+                    secondary: const Icon(Icons.fingerprint_rounded, size: 26),
                     title: const Text(
-                      'Khóa ứng dụng bằng Face ID / Touch ID / Sinh trắc học',
+                      'Khóa ứng dụng bằng Sinh trắc học',
+                      style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                     subtitle: const Text(
-                      'Yêu cầu xác thực sinh trắc học khi mở kho tài liệu cá nhân',
+                      'Bảo vệ tài liệu bằng Face ID, Touch ID hoặc vân tay',
                     ),
                     value: widget.appState.biometricLockEnabled,
                     onChanged: (val) {
@@ -123,10 +142,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   const Divider(),
                   const ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(Icons.airplanemode_active, color: Colors.teal),
-                    title: Text('Cam kết 100% Ngoại tuyến (Offline-First)'),
+                    leading: Icon(Icons.auto_awesome_rounded, color: Colors.teal),
+                    title: Text(
+                      'OCR Kết hợp: Offline + AI Trên Thiết Bị',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
                     subtitle: Text(
-                      'Ảnh gốc, PDF và dữ liệu OCR Tiếng Việt/Anh được xử lý và lưu trữ hoàn toàn trên thiết bị, hoạt động trọn vẹn ở chế độ máy bay.',
+                      'Tự động kết hợp mạng nơ-ron LSTM Tiếng Việt (Tesseract 5 / Apple Vision) và ML Kit ngay trên máy — không gửi dữ liệu qua bên thứ 3.',
                     ),
                   ),
                 ],
@@ -149,36 +171,54 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            titleSpacing: 16,
+            title: Row(
               children: [
-                Text(
-                  'Scan Tài Liệu Cá Nhân',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.document_scanner_rounded,
+                    size: 20,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
                 ),
-                Text(
-                  '100% Ngoại tuyến • OCR Việt/Anh • PDF Nhiều trang',
-                  style: TextStyle(fontSize: 11),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Scan Tài Liệu AI',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 17,
+                        ),
+                      ),
+                      Text(
+                        'Quét tự động • OCR Tiếng Việt • PDF',
+                        style: TextStyle(fontSize: 11.5, color: Colors.grey),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
             actions: [
               IconButton(
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PdfToolsScreen(appState: widget.appState),
-                    ),
-                  );
-                },
-                tooltip: 'Công cụ PDF & Kiểm chuẩn',
-                icon: const Icon(Icons.handyman_outlined),
+                onPressed: () => _startAiScan(forceBuiltInCamera: true),
+                tooltip: 'Camera AI tích hợp',
+                icon: const Icon(Icons.camera_enhance_outlined, size: 22),
               ),
               IconButton(
                 onPressed: _openSettingsSheet,
                 tooltip: 'Bảo mật & Cài đặt',
-                icon: const Icon(Icons.shield_outlined),
+                icon: const Icon(Icons.shield_outlined, size: 22),
               ),
+              const SizedBox(width: 4),
             ],
           ),
           body: Stack(
@@ -199,6 +239,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   alignment: Alignment.center,
                   child: Card(
                     margin: const EdgeInsets.symmetric(horizontal: 32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(20),
                       child: Column(
@@ -209,6 +252,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           Text(
                             widget.appState.busyMessage ?? 'Đang xử lý...',
                             textAlign: TextAlign.center,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
                           ),
                         ],
                       ),
@@ -217,27 +261,86 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
             ],
           ),
-          floatingActionButton: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              FloatingActionButton.small(
-                heroTag: 'fab_gallery',
-                onPressed: _importImagesFromGallery,
-                tooltip: 'Nhập nhiều ảnh từ thư viện',
-                child: const Icon(Icons.photo_library_outlined),
-              ),
-              const SizedBox(height: 10),
-              FloatingActionButton.extended(
-                heroTag: 'fab_camera',
-                onPressed: _startCameraScan,
-                icon: const Icon(Icons.document_scanner_outlined),
-                label: const Text('Quét tài liệu'),
-              ),
-            ],
-          ),
+          bottomNavigationBar: _buildCleanBottomActionBar(),
         );
       },
+    );
+  }
+
+  /// Thanh tác vụ dưới cùng gọn gàng với 3 nút bấm trực quan.
+  Widget _buildCleanBottomActionBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: Colors.grey.withOpacity(0.2)),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _importImagesFromGallery,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.photo_library_outlined, size: 19),
+                label: const Text(
+                  'Nhập ảnh',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: FilledButton.icon(
+                onPressed: () => _startAiScan(forceBuiltInCamera: false),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.auto_awesome_rounded, size: 20),
+                label: const Text(
+                  'Quét AI Tự Động',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => PdfToolsScreen(appState: widget.appState),
+                    ),
+                  );
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                icon: const Icon(Icons.picture_as_pdf_outlined, size: 19),
+                label: const Text(
+                  'Công cụ',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -249,7 +352,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.lock_person_outlined, size: 72, color: Colors.teal),
+              const Icon(
+                Icons.lock_person_rounded,
+                size: 68,
+                color: Colors.teal,
+              ),
               const SizedBox(height: 18),
               Text(
                 'Kho Tài Liệu Đang Khóa',
@@ -259,14 +366,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Xác thực Face ID, Touch ID hoặc sinh trắc học để truy cập tài liệu cá nhân của bạn.',
+                'Xác thực sinh trắc học để mở kho tài liệu scan cá nhân của bạn.',
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: () => widget.appState.unlockWithBiometrics(),
-                icon: const Icon(Icons.fingerprint),
-                label: const Text('Mở khóa bằng sinh trắc học'),
+                icon: const Icon(Icons.fingerprint_rounded),
+                label: const Text('Mở khóa ngay'),
               ),
             ],
           ),
@@ -280,18 +387,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final tags = widget.appState.availableTags;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
             controller: _searchController,
             decoration: InputDecoration(
-              hintText: 'Tìm theo tên, thẻ hoặc nội dung OCR tiếng Việt/Anh...',
-              prefixIcon: const Icon(Icons.search),
+              hintText: 'Tìm tên tài liệu, thẻ hoặc chữ OCR bên trong...',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
               suffixIcon: _searchController.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear),
+                      icon: const Icon(Icons.close_rounded, size: 18),
                       onPressed: () {
                         _searchController.clear();
                         widget.appState.setSearchQuery('');
@@ -299,25 +406,30 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     )
                   : null,
               isDense: true,
+              filled: true,
+              fillColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.55),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
               ),
             ),
             onChanged: (val) => widget.appState.setSearchQuery(val),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           SizedBox(
-            height: 36,
+            height: 34,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: folders.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
               itemBuilder: (context, index) {
                 final folder = folders[index];
                 final selected = widget.appState.selectedFolder == folder;
                 return ChoiceChip(
                   label: Text(folder, style: const TextStyle(fontSize: 12)),
                   selected: selected,
+                  showCheckmark: false,
                   visualDensity: VisualDensity.compact,
                   onSelected: (_) => widget.appState.setFolderFilter(folder),
                 );
@@ -327,7 +439,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           if (tags.isNotEmpty) ...[
             const SizedBox(height: 6),
             SizedBox(
-              height: 32,
+              height: 30,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: tags.length,
@@ -356,34 +468,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final draft = widget.appState.recoverableDrafts.first;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.amber.shade100,
+        color: Colors.amber.shade50,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.amber.shade600),
+        border: Border.all(color: Colors.amber.shade400),
       ),
       child: Row(
         children: [
-          const Icon(Icons.restore_page_outlined, color: Colors.deepOrange),
+          const Icon(
+            Icons.restore_page_rounded,
+            color: Colors.deepOrange,
+            size: 22,
+          ),
           const SizedBox(width: 10),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Phát hiện bản nháp chưa hoàn tất',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                ),
-                Text(
-                  '${draft.title} (${draft.pageCount} trang) được lưu tự động trước khi đóng ứng dụng.',
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ],
+            child: Text(
+              'Bản nháp: ${draft.title} (${draft.pageCount} trang)',
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
             ),
           ),
           TextButton(
             onPressed: () => widget.appState.deleteDocument(draft),
-            child: const Text('Bỏ'),
+            child: const Text('Xóa'),
           ),
           FilledButton.tonal(
             onPressed: () async {
@@ -398,7 +505,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               );
             },
-            child: const Text('Khôi phục'),
+            child: const Text('Mở lại'),
           ),
         ],
       ),
@@ -414,24 +521,34 @@ class _LibraryScreenState extends State<LibraryScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.document_scanner_outlined,
-                size: 72,
-                color: Colors.teal.withOpacity(0.45),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.auto_awesome_rounded,
+                  size: 48,
+                  color: Colors.teal,
+                ),
               ),
               const SizedBox(height: 16),
               Text(
                 widget.appState.searchQuery.isNotEmpty
                     ? 'Không tìm thấy tài liệu hoặc nội dung OCR khớp từ khóa.'
-                    : 'Chưa có tài liệu nào trong thư viện.',
+                    : 'Chưa có tài liệu nào',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Bấm nút "Quét tài liệu" để chụp tự động nhận diện mép giấy, chỉnh 4 góc, lọc màu và OCR tiếng Việt/Anh ngoại tuyến.',
+                'Bấm "Quét AI Tự Động" ở bên dưới — AI sẽ tự nhận diện mép giấy mọi góc độ (không cần căn khung), làm phẳng và đọc OCR Tiếng Việt.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black54),
+                style: TextStyle(color: Colors.black54, fontSize: 13.5),
               ),
             ],
           ),
@@ -443,7 +560,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final query = widget.appState.searchQuery;
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       itemCount: docs.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
@@ -456,8 +573,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
             : null;
 
         return Card(
+          elevation: 0.8,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: Colors.grey.withOpacity(0.18)),
+          ),
           child: InkWell(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -471,13 +593,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
             child: Padding(
               padding: const EdgeInsets.all(12.0),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                     child: SizedBox(
-                      width: 66,
-                      height: 88,
+                      width: 60,
+                      height: 80,
                       child: thumbFile != null && thumbFile.existsSync()
                           ? Image.file(
                               thumbFile,
@@ -486,109 +608,101 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             )
                           : Container(
                               color: Colors.grey.shade200,
-                              child: const Icon(Icons.picture_as_pdf_outlined),
+                              child: const Icon(Icons.description_outlined),
                             ),
                     ),
                   ),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           doc.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          '${doc.pageCount} trang • ${doc.folder} • ${dateFmt.format(doc.updatedAt)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
-                          ),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.teal.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                '${doc.pageCount} trang',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.teal,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                dateFmt.format(doc.updatedAt),
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        if (doc.tags.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            children: doc.tags
-                                .map(
-                                  (t) => Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.teal.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Text(
-                                      '#$t',
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.teal,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          ),
-                        ],
                         if (matchedSnippet != null) ...[
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                           Container(
-                            padding: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: Colors.amber.shade50,
                               borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: Colors.amber.shade300),
                             ),
                             child: Text(
-                              'Khớp OCR — $matchedSnippet',
-                              style: const TextStyle(fontSize: 12),
+                              matchedSnippet,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11.5),
                             ),
                           ),
                         ],
                       ],
                     ),
                   ),
-                  PopupMenuButton<String>(
-                    onSelected: (action) async {
-                      if (action == 'export_pdf') {
-                        await widget.appState.exportSearchablePdf(
-                          document: doc,
-                          openShareSheet: true,
-                        );
-                      } else if (action == 'delete') {
-                        await widget.appState.deleteDocument(doc);
-                      }
+                  // Nút chia sẻ nhanh sang ứng dụng khác (Zalo, Gmail, Drive...)
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Chia sẻ PDF qua ứng dụng khác',
+                    icon: const Icon(Icons.share_outlined, size: 20),
+                    onPressed: () {
+                      widget.appState.exportSearchablePdf(
+                        document: doc,
+                        openShareSheet: true,
+                      );
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(
-                        value: 'export_pdf',
-                        child: ListTile(
-                          leading: Icon(Icons.picture_as_pdf),
-                          title: Text('Xuất & Chia sẻ PDF'),
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: ListTile(
-                          leading: Icon(Icons.delete_outline, color: Colors.red),
-                          title: Text(
-                            'Xóa tài liệu',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                          contentPadding: EdgeInsets.zero,
-                        ),
-                      ),
-                    ],
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Xóa tài liệu',
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 20,
+                      color: Colors.redAccent,
+                    ),
+                    onPressed: () => widget.appState.deleteDocument(doc),
                   ),
                 ],
               ),
@@ -599,4 +713,3 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 }
-
