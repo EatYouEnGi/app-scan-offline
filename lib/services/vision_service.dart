@@ -113,7 +113,9 @@ class VisionService {
     for (int y = 0; y < analysisH; y++) {
       for (int x = 0; x < analysisW; x++) {
         final p = small.getPixel(x, y);
-        final v = ((p.r * 77 + p.g * 150 + p.b * 29) >> 8).clamp(0, 255);
+        final v = ((p.r.toInt() * 77 + p.g.toInt() * 150 + p.b.toInt() * 29) >> 8)
+            .clamp(0, 255)
+            .toInt();
         luma[y * analysisW + x] = v;
         hist[v]++;
       }
@@ -483,7 +485,9 @@ class VisionService {
       int rowSum = 0;
       for (int x = 0; x < w; x++) {
         final p = src.getPixel(x, y);
-        final v = ((p.r * 77 + p.g * 150 + p.b * 29) >> 8).clamp(0, 255);
+        final v = ((p.r.toInt() * 77 + p.g.toInt() * 150 + p.b.toInt() * 29) >> 8)
+            .clamp(0, 255)
+            .toInt();
         luma[y * w + x] = v;
         rowSum += v;
         integral[(y + 1) * (w + 1) + (x + 1)] =

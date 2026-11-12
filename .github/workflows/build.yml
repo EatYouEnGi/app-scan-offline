@@ -73,7 +73,7 @@ jobs:
   # ============================================================================
   build-ios:
     name: Build iOS 16+ IPA (macOS Xcode)
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
