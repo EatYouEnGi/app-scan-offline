@@ -43,6 +43,9 @@ class AppState extends ChangeNotifier {
 
   bool _biometricLockEnabled = false;
   bool _isLocked = false;
+  String _languageCode = 'vi';
+  bool _hasCompletedOnboarding = false;
+  bool _isInitialized = false;
 
   AppState({
     DatabaseService? databaseService,
@@ -75,6 +78,29 @@ class AppState extends ChangeNotifier {
   bool get biometricLockEnabled => _biometricLockEnabled;
   bool get biometricEnabled => _biometricLockEnabled;
   bool get isLocked => _isLocked;
+  String get languageCode => _languageCode;
+  bool get isVi => _languageCode != 'en';
+  bool get hasCompletedOnboarding => _hasCompletedOnboarding;
+  bool get isInitialized => _isInitialized;
+
+  String tr(String vi, String en) => isVi ? vi : en;
+
+  Future<void> setLanguageCode(String code) async {
+    final normalized = code == 'en' ? 'en' : 'vi';
+    _languageCode = normalized;
+    await securityService.setLanguageCode(normalized);
+    notifyListeners();
+  }
+
+  Future<void> toggleLanguage() async {
+    await setLanguageCode(isVi ? 'en' : 'vi');
+  }
+
+  Future<void> completeOnboarding() async {
+    _hasCompletedOnboarding = true;
+    await securityService.setCompletedOnboarding(true);
+    notifyListeners();
+  }
 
   final Set<String> _customFolders = <String>{};
 
@@ -116,6 +142,8 @@ class AppState extends ChangeNotifier {
     _setBusy(true, 'Đang khởi tạo kho tài liệu ngoại tuyến...');
     try {
       await storageService.initialize();
+      _languageCode = await securityService.getLanguageCode();
+      _hasCompletedOnboarding = await securityService.hasCompletedOnboarding();
       _biometricLockEnabled = await securityService.isBiometricLockEnabled();
       if (_biometricLockEnabled) {
         _isLocked = true;
@@ -124,6 +152,7 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       _lastError = e.toString();
     } finally {
+      _isInitialized = true;
       _setBusy(false, null);
     }
   }

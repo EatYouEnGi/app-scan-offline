@@ -3,21 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
-import '../models/scan_models.dart';
 import '../services/database_service.dart';
 import '../state/app_state.dart';
 import '../theme/stitch_theme.dart';
 import 'document_detail_screen.dart';
+import 'onboarding_screen.dart';
 import 'pdf_tools_screen.dart';
 import 'scanner_screen.dart';
 
 /// Màn hình chính (Thư viện tài liệu) được tối ưu theo bản thiết kế Google Stitch
 /// (`1._th_vi_n_t_i_li_u_home/code.html`):
-/// - Thẻ Header Truy cập nhanh kèm huy hiệu Verified & 2 nút tròn (Camera AI, Bảo mật).
+/// - Thẻ Header Truy cập nhanh kèm huy hiệu Verified, nút chuyển đổi ngôn ngữ (`VI` / `EN`) & 2 nút tròn (Camera AI, Bảo mật).
 /// - Thanh tìm kiếm OCR Tiếng Việt / Chữ viết tay + dải Chip danh mục có biểu tượng riêng.
 /// - Thẻ tài liệu có ảnh thu nhỏ 60x80 kèm huy hiệu số trang, dòng xem trước OCR nổi bật (`#FFFBEB`),
 ///   và 2 nút tròn Chia sẻ nhanh / Xóa.
 /// - Thanh điều hướng dưới cùng (Bottom Dock) với nút trung tâm nổi `Quét AI Tự Động`.
+/// - Hỗ trợ song ngữ Tiếng Việt & Tiếng Anh.
 class LibraryScreen extends StatefulWidget {
   final AppState appState;
 
@@ -34,15 +35,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final ImagePicker _picker = ImagePicker();
   final TextEditingController _searchController = TextEditingController();
 
+  String _tr(String vi, String en) => widget.appState.tr(vi, en);
+
+  String _displayFolderName(String folder) {
+    if (widget.appState.isVi) return folder;
+    switch (folder) {
+      case 'Tất cả tài liệu':
+        return 'All Documents';
+      case 'Hóa đơn & Biên lai':
+        return 'Receipts & Bills';
+      case 'Hợp đồng & Pháp lý':
+        return 'Contracts & Legal';
+      case 'CCCD & Giấy tờ tùy thân':
+        return 'ID & Passports';
+      case 'Tài liệu học tập':
+        return 'Study & Notes';
+      default:
+        return folder;
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
 
-  /// Quét tài liệu bằng AI:
-  /// - Mặc định gọi trình quét AI gốc trên thiết bị (`CunningDocumentScanner`) tự bắt mép giấy và làm phẳng.
-  /// - Nếu người dùng muốn dùng Camera AI không khung tích hợp hoặc thiết bị không hỗ trợ, chuyển sang `ScannerScreen`.
   Future<void> _startAiScan({bool forceBuiltInCamera = false}) async {
     List<String>? capturedPaths;
 
@@ -53,7 +71,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (capturedPaths == null && mounted) {
       capturedPaths = await Navigator.of(context).push<List<String>>(
         MaterialPageRoute(
-          builder: (_) => const ScannerScreen(),
+          builder: (_) => ScannerScreen(isVi: widget.appState.isVi),
         ),
       );
     }
@@ -112,15 +130,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: StitchTheme.surfaceWhite,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text(
-          'Tạo thư mục mới',
-          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
+        title: Text(
+          _tr('Tạo thư mục mới', 'Create New Folder'),
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17),
         ),
         content: TextField(
           controller: controller,
           autofocus: true,
           decoration: InputDecoration(
-            hintText: 'Nhập tên thư mục (VD: Thuế 2026)',
+            hintText: _tr(
+              'Nhập tên thư mục (VD: Thuế 2026)',
+              'Enter folder name (e.g. Tax 2026)',
+            ),
             filled: true,
             fillColor: StitchTheme.surfaceLight,
             border: OutlineInputBorder(
@@ -132,7 +153,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Hủy'),
+            child: Text(_tr('Hủy', 'Cancel')),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
@@ -145,7 +166,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               widget.appState.addCustomFolder(controller.text);
               Navigator.of(ctx).pop();
             },
-            child: const Text('Tạo thư mục'),
+            child: Text(_tr('Tạo thư mục', 'Create')),
           ),
         ],
       ),
@@ -186,21 +207,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ),
                         ),
                         const SizedBox(width: 12),
-                        const Expanded(
+                        Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Bảo mật & Chế độ Quét AI',
-                                style: TextStyle(
+                                _tr(
+                                  'Cài đặt, Ngôn ngữ & Bảo mật',
+                                  'Settings, Language & Security',
+                                ),
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 16,
                                   color: StitchTheme.onSurface,
                                 ),
                               ),
                               Text(
-                                'Xử lý ngoại tuyến 100% On-Device',
-                                style: TextStyle(
+                                _tr(
+                                  'Xử lý ngoại tuyến 100% On-Device',
+                                  '100% On-Device Offline Processing',
+                                ),
+                                style: const TextStyle(
                                   fontSize: 12,
                                   color: StitchTheme.onSurfaceVariant,
                                 ),
@@ -219,21 +246,60 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
                       child: Column(
                         children: [
+                          ListTile(
+                            leading: const Icon(
+                              Icons.language_rounded,
+                              color: StitchTheme.primary,
+                            ),
+                            title: Text(
+                              _tr('Ngôn ngữ hiển thị', 'App Language'),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: Text(
+                              widget.appState.isVi
+                                  ? 'Đang dùng: Tiếng Việt (VI)'
+                                  : 'Current: English (EN)',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            trailing: SegmentedButton<String>(
+                              segments: const [
+                                ButtonSegment(value: 'vi', label: Text('VI')),
+                                ButtonSegment(value: 'en', label: Text('EN')),
+                              ],
+                              selected: {widget.appState.languageCode},
+                              onSelectionChanged: (s) {
+                                widget.appState.setLanguageCode(s.first);
+                              },
+                              style: const ButtonStyle(
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 1),
                           SwitchListTile(
                             secondary: const Icon(
                               Icons.fingerprint_rounded,
                               color: StitchTheme.primary,
                             ),
-                            title: const Text(
-                              'Khóa ứng dụng bằng Sinh trắc học',
-                              style: TextStyle(
+                            title: Text(
+                              _tr(
+                                'Khóa ứng dụng bằng Sinh trắc học',
+                                'Biometric App Lock',
+                              ),
+                              style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 14,
                               ),
                             ),
-                            subtitle: const Text(
-                              'Yêu cầu Face ID / Vân tay khi mở kho tài liệu',
-                              style: TextStyle(fontSize: 12),
+                            subtitle: Text(
+                              _tr(
+                                'Yêu cầu Face ID / Vân tay khi mở kho tài liệu',
+                                'Require Face ID / Fingerprint when opening library',
+                              ),
+                              style: const TextStyle(fontSize: 12),
                             ),
                             value: widget.appState.biometricEnabled,
                             onChanged: (val) =>
@@ -245,21 +311,56 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               Icons.center_focus_strong_rounded,
                               color: StitchTheme.primary,
                             ),
-                            title: const Text(
-                              'Mở Camera AI Không Khung (Built-in)',
-                              style: TextStyle(
+                            title: Text(
+                              _tr(
+                                'Mở Camera AI Không Khung (Built-in)',
+                                'Open Frameless AI Camera (Built-in)',
+                              ),
+                              style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 14,
                               ),
                             ),
-                            subtitle: const Text(
-                              'Tự vẽ đa giác bám mép giấy thời gian thực không cần căn khung',
-                              style: TextStyle(fontSize: 12),
+                            subtitle: Text(
+                              _tr(
+                                'Tự vẽ đa giác bám mép giấy thời gian thực không cần căn khung',
+                                'Real-time 4-point polygon tracking without fixed frames',
+                              ),
+                              style: const TextStyle(fontSize: 12),
                             ),
                             trailing: const Icon(Icons.chevron_right_rounded),
                             onTap: () {
                               Navigator.of(ctx).pop();
                               _startAiScan(forceBuiltInCamera: true);
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ListTile(
+                            leading: const Icon(
+                              Icons.auto_stories_outlined,
+                              color: StitchTheme.primary,
+                            ),
+                            title: Text(
+                              _tr(
+                                'Xem lại giới thiệu ứng dụng (Onboarding)',
+                                'View App Onboarding Guide',
+                              ),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                              ),
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () {
+                              Navigator.of(ctx).pop();
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => OnboardingScreen(
+                                    appState: widget.appState,
+                                    fromSettings: true,
+                                  ),
+                                ),
+                              );
                             },
                           ),
                         ],
@@ -328,7 +429,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ),
                           const SizedBox(height: 14),
                           Text(
-                            widget.appState.busyMessage ?? 'Đang xử lý...',
+                            widget.appState.busyMessage ??
+                                _tr('Đang xử lý...', 'Processing...'),
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
@@ -348,7 +450,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  /// Header truy cập nhanh chuẩn Stitch (`bg-surface-white rounded-xl shadow-sm p-3`).
   Widget _buildStitchQuickAccessHeader() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -379,8 +480,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               size: 24,
             ),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
+          const SizedBox(width: 10),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -388,30 +489,33 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   children: [
                     Flexible(
                       child: Text(
-                        'Scan Tài Liệu AI',
+                        _tr('Scan Tài Liệu AI', 'AI Document Scanner'),
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 17,
+                        style: const TextStyle(
+                          fontSize: 16.5,
                           fontWeight: FontWeight.w700,
                           letterSpacing: -0.2,
                           color: StitchTheme.onSurface,
                         ),
                       ),
                     ),
-                    SizedBox(width: 4),
-                    Icon(
+                    const SizedBox(width: 4),
+                    const Icon(
                       Icons.verified_rounded,
                       size: 16,
                       color: StitchTheme.primary,
                     ),
                   ],
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  'Quét tự động • OCR Tiếng Việt • PDF',
+                  _tr(
+                    'Quét tự động • OCR Tiếng Việt • PDF',
+                    'Auto Scan • Vietnamese OCR • PDF',
+                  ),
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: const TextStyle(
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w500,
                     color: StitchTheme.onSurfaceVariant,
                   ),
@@ -419,18 +523,41 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
+          // Nút chuyển nhanh Ngôn ngữ VI / EN
+          InkWell(
+            onTap: () => widget.appState.toggleLanguage(),
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              height: 36,
+              padding: const EdgeInsets.symmetric(horizontal: 9),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: StitchTheme.primaryContainerLight,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                widget.appState.isVi ? '🇻🇳 VI' : '🇬🇧 EN',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: StitchTheme.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 5),
           _circleHeaderIconButton(
             icon: Icons.photo_camera_outlined,
             color: StitchTheme.primary,
-            tooltip: 'Camera AI Không Khung',
+            tooltip: _tr('Camera AI Không Khung', 'Frameless AI Camera'),
             onTap: () => _startAiScan(forceBuiltInCamera: true),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 5),
           _circleHeaderIconButton(
-            icon: Icons.verified_user_outlined,
+            icon: Icons.tune_rounded,
             color: StitchTheme.onSurfaceVariant,
-            tooltip: 'Bảo mật & Cài đặt',
+            tooltip: _tr('Cài đặt & Bảo mật', 'Settings & Security'),
             onTap: _openSettingsSheet,
           ),
         ],
@@ -453,16 +580,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: Tooltip(
           message: tooltip,
           child: SizedBox(
-            width: 40,
-            height: 40,
-            child: Icon(icon, size: 20, color: color),
+            width: 38,
+            height: 38,
+            child: Icon(icon, size: 19, color: color),
           ),
         ),
       ),
     );
   }
 
-  /// Thanh điều hướng dưới cùng chuẩn Stitch với nút trung tâm nổi `Quét AI Tự Động`.
   Widget _buildStitchBottomDockBar() {
     return Container(
       decoration: BoxDecoration(
@@ -485,22 +611,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              // Nút trái: Nhập ảnh
               Expanded(
                 child: InkWell(
                   onTap: _importImagesFromGallery,
-                  child: const Column(
+                  child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
+                      const Icon(
                         Icons.photo_library_outlined,
                         size: 24,
                         color: StitchTheme.onSurfaceVariant,
                       ),
-                      SizedBox(height: 4),
+                      const SizedBox(height: 4),
                       Text(
-                        'Nhập ảnh',
-                        style: TextStyle(
+                        _tr('Nhập ảnh', 'Import'),
+                        style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: StitchTheme.onSurfaceVariant,
@@ -510,7 +635,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ),
               ),
-              // Nút giữa nổi: Quét AI Tự Động
               Expanded(
                 child: GestureDetector(
                   onTap: () => _startAiScan(forceBuiltInCamera: false),
@@ -539,9 +663,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         ),
                       ),
                       const SizedBox(height: 3),
-                      const Text(
-                        'Quét AI Tự Động',
-                        style: TextStyle(
+                      Text(
+                        _tr('Quét AI Tự Động', 'AI Auto Scan'),
+                        style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                           color: StitchTheme.primary,
@@ -551,22 +675,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                 ),
               ),
-              // Nút phải: Công cụ PDF & Bảo mật
               Expanded(
                 child: InkWell(
                   onTap: _openPdfTools,
-                  child: const Column(
+                  child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
+                      const Icon(
                         Icons.handyman_outlined,
                         size: 24,
                         color: StitchTheme.onSurfaceVariant,
                       ),
-                      SizedBox(height: 4),
+                      const SizedBox(height: 4),
                       Text(
-                        'Công cụ',
-                        style: TextStyle(
+                        _tr('Công cụ', 'PDF Tools'),
+                        style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: StitchTheme.onSurfaceVariant,
@@ -642,20 +765,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ],
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Kho Tài Liệu Đang Khóa An Toàn',
+                Text(
+                  _tr('Kho Tài Liệu Đang Khóa An Toàn', 'Document Vault Locked'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 19,
                     fontWeight: FontWeight.w700,
                     color: StitchTheme.onSurface,
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Xác thực bằng Vân tay / Face ID hoặc mã thiết bị để mở thư viện tài liệu scan cá nhân.',
+                Text(
+                  _tr(
+                    'Xác thực bằng Vân tay / Face ID hoặc mã thiết bị để mở thư viện tài liệu scan cá nhân.',
+                    'Authenticate with Face ID / Fingerprint or device passcode to unlock your personal vault.',
+                  ),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: StitchTheme.onSurfaceVariant,
                     fontSize: 13.5,
                     height: 1.45,
@@ -674,9 +800,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                     onPressed: () => widget.appState.unlockWithBiometrics(),
                     icon: const Icon(Icons.lock_open_rounded, size: 19),
-                    label: const Text(
-                      'Mở khóa ngay',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                    label: Text(
+                      _tr('Mở khóa ngay', 'Unlock Now'),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                     ),
                   ),
                 ),
@@ -728,7 +857,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
               controller: _searchController,
               style: const TextStyle(fontSize: 14, color: StitchTheme.onSurface),
               decoration: InputDecoration(
-                hintText: 'Tìm tên tài liệu, nội dung OCR, chữ viết tay...',
+                hintText: _tr(
+                  'Tìm tên tài liệu, nội dung OCR, chữ viết tay...',
+                  'Search document title, OCR text, handwriting...',
+                ),
                 hintStyle: const TextStyle(
                   fontSize: 13.5,
                   color: StitchTheme.outline,
@@ -775,18 +907,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         color: StitchTheme.primaryContainerLight,
                         borderRadius: BorderRadius.circular(999),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
+                          const Icon(
                             Icons.create_new_folder_outlined,
                             size: 15,
                             color: StitchTheme.primary,
                           ),
-                          SizedBox(width: 5),
+                          const SizedBox(width: 5),
                           Text(
-                            '+ Thư mục',
-                            style: TextStyle(
+                            _tr('+ Thư mục', '+ Folder'),
+                            style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: StitchTheme.primary,
@@ -828,7 +960,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          folder,
+                          _displayFolderName(folder),
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight:
@@ -881,16 +1013,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Phiên quét chưa hoàn tất',
-                  style: TextStyle(
+                Text(
+                  _tr('Phiên quét chưa hoàn tất', 'Unfinished Scan Session'),
+                  style: const TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 12.5,
                     color: StitchTheme.onSurface,
                   ),
                 ),
                 Text(
-                  'Có 1 phiên chụp đang dở (${draft.pageCount} trang)',
+                  _tr(
+                    'Có 1 phiên chụp đang dở (${draft.pageCount} trang)',
+                    '1 draft session found (${draft.pageCount} pages)',
+                  ),
                   style: const TextStyle(
                     fontSize: 12,
                     color: StitchTheme.onSurfaceVariant,
@@ -905,7 +1040,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
               visualDensity: VisualDensity.compact,
               foregroundColor: StitchTheme.onSurfaceVariant,
             ),
-            child: const Text('Bỏ', style: TextStyle(fontSize: 12)),
+            child: Text(
+              _tr('Bỏ', 'Discard'),
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
           const SizedBox(width: 4),
           FilledButton(
@@ -929,15 +1067,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Mở lại',
-                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600),
+                  _tr('Mở lại', 'Resume'),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                SizedBox(width: 4),
-                Icon(Icons.arrow_forward_rounded, size: 13),
+                const SizedBox(width: 4),
+                const Icon(Icons.arrow_forward_rounded, size: 13),
               ],
             ),
           ),
@@ -971,8 +1112,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
               const SizedBox(height: 14),
               Text(
                 widget.appState.searchQuery.isNotEmpty
-                    ? 'Không tìm thấy tài liệu hoặc nội dung OCR khớp từ khóa'
-                    : 'Chưa có tài liệu nào trong thư viện',
+                    ? _tr(
+                        'Không tìm thấy tài liệu hoặc nội dung OCR khớp từ khóa',
+                        'No documents or OCR text matched your search',
+                      )
+                    : _tr(
+                        'Chưa có tài liệu nào trong thư viện',
+                        'No documents in your library yet',
+                      ),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 16,
@@ -981,10 +1128,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Bấm nút tròn "Quét AI Tự Động" ở thanh dưới — AI sẽ tự nhận diện 4 góc tờ giấy mọi góc độ (không cần căn khung), làm phẳng và đọc OCR Tiếng Việt.',
+              Text(
+                _tr(
+                  'Bấm nút tròn "Quét AI Tự Động" ở thanh dưới — AI sẽ tự nhận diện 4 góc tờ giấy mọi góc độ (không cần căn khung), làm phẳng và đọc OCR Tiếng Việt.',
+                  'Tap the center "AI Auto Scan" button below — AI automatically detects 4 paper corners at any angle, flattens perspective, and runs on-device OCR.',
+                ),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: StitchTheme.onSurfaceVariant,
                   fontSize: 13,
                   height: 1.45,
@@ -1006,7 +1156,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
       itemCount: docs.length + 2,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
-        // Dòng tiêu đề danh sách ("Tài liệu gần đây • X tệp")
         if (index == 0) {
           return Padding(
             padding: const EdgeInsets.only(bottom: 2),
@@ -1015,9 +1164,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
               children: [
                 Row(
                   children: [
-                    const Text(
-                      'Tài liệu gần đây',
-                      style: TextStyle(
+                    Text(
+                      _tr('Tài liệu gần đây', 'Recent Documents'),
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                         color: StitchTheme.onSurface,
@@ -1034,7 +1183,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
-                        '${docs.length} tệp',
+                        '${docs.length} ${_tr('tệp', 'files')}',
                         style: const TextStyle(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
@@ -1044,17 +1193,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ],
                 ),
-                const Row(
+                Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.sort_rounded,
                       size: 16,
                       color: StitchTheme.primary,
                     ),
-                    SizedBox(width: 4),
+                    const SizedBox(width: 4),
                     Text(
-                      'Mới nhất',
-                      style: TextStyle(
+                      _tr('Mới nhất', 'Newest'),
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                         color: StitchTheme.primary,
@@ -1067,7 +1216,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         }
 
-        // Thẻ Pro Tips ở cuối danh sách
         if (index == docs.length + 1) {
           return Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -1119,7 +1267,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 60x80 Thumbnail chuẩn Stitch với nhãn số trang ở đáy
                   SizedBox(
                     width: 60,
                     height: 80,
@@ -1169,7 +1316,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
-                              '${doc.pageCount} trang',
+                              '${doc.pageCount} ${_tr('trang', 'p')}',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
                                 fontSize: 9.5,
@@ -1183,7 +1330,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Cột thông tin giữa
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1226,8 +1372,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             Flexible(
                               child: Text(
                                 doc.combinedOcrText.trim().isNotEmpty
-                                    ? 'Đã số hóa AI'
-                                    : doc.folder,
+                                    ? _tr('Đã số hóa AI', 'AI Digitized')
+                                    : _displayFolderName(doc.folder),
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 11.5,
@@ -1239,7 +1385,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           ],
                         ),
                         const SizedBox(height: 7),
-                        // Hộp trích đoạn OCR nổi bật chuẩn Stitch (`bg-surface-warning-light`)
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.symmetric(
@@ -1271,7 +1416,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 ),
                                 TextSpan(
                                   text: firstOcrPreview ??
-                                      'Chạm để xem hoặc quét AI OCR Tiếng Việt...',
+                                      _tr(
+                                        'Chạm để xem hoặc quét AI OCR Tiếng Việt...',
+                                        'Tap to view or run on-device AI OCR...',
+                                      ),
                                   style: TextStyle(
                                     fontWeight: firstOcrPreview != null
                                         ? FontWeight.w500
@@ -1290,7 +1438,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Cột 2 nút tròn bên phải (Chia sẻ & Xóa)
                   Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -1298,7 +1445,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         icon: Icons.ios_share_rounded,
                         iconColor: StitchTheme.onSurfaceVariant,
                         bgColor: StitchTheme.surfaceNeutralPill,
-                        tooltip: 'Chia sẻ PDF qua ứng dụng khác',
+                        tooltip: _tr(
+                          'Chia sẻ PDF qua ứng dụng khác',
+                          'Share PDF via other apps',
+                        ),
                         onTap: () {
                           widget.appState.exportSearchablePdf(
                             document: doc,
@@ -1311,7 +1461,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         icon: Icons.delete_outline_rounded,
                         iconColor: StitchTheme.statusDangerStamp,
                         bgColor: StitchTheme.surfaceNeutralPill,
-                        tooltip: 'Xóa tài liệu',
+                        tooltip: _tr('Xóa tài liệu', 'Delete document'),
                         onTap: () => widget.appState.deleteDocument(doc),
                       ),
                     ],
@@ -1376,22 +1526,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tự động nhận diện góc 4 điểm',
-                  style: TextStyle(
+                  _tr(
+                    'Tự động nhận diện góc 4 điểm',
+                    'Precision 4-Corner Auto Detection',
+                  ),
+                  style: const TextStyle(
                     fontSize: 13.5,
                     fontWeight: FontWeight.w700,
                     color: StitchTheme.primary,
                   ),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(height: 2),
                 Text(
-                  'Đưa camera vào tài liệu bất kỳ — thuật toán AI tự bắt mép giấy và lọc phẳng nếp gấp tự động.',
-                  style: TextStyle(
+                  _tr(
+                    'Đưa camera vào tài liệu bất kỳ — thuật toán AI tự bắt mép giấy và lọc phẳng nếp gấp tự động.',
+                    'Point the camera at any document — AI automatically detects paper boundaries and flattens perspective.',
+                  ),
+                  style: const TextStyle(
                     fontSize: 12,
                     color: StitchTheme.onSurfaceVariant,
                     height: 1.35,

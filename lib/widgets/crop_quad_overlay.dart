@@ -4,17 +4,19 @@ import '../models/scan_models.dart';
 
 /// Lớp phủ tương tác 4 góc cắt phối cảnh (Perspective Quad Cropper - Stitch Screen 5):
 /// - Cho phép kéo từng góc độc lập với lưới phối cảnh 1/3 (rule-of-thirds).
-/// - Kính lúp phóng đại tròn 2.5x (Circular Magnifier Loupe 86x86) kèm tâm ngắm chữ thập giúp đặt góc chính xác từng pixel.
+/// - Kính lúp phóng đại tròn 2.5x (Circular Magnifier Loupe 86x86) căn chính xác tọa độ đỉnh đang kéo vào đúng tâm chữ thập.
 class CropQuadOverlay extends StatefulWidget {
   final CropQuad quad;
   final ValueChanged<CropQuad> onChanged;
   final String? imagePath;
+  final bool isVi;
 
   const CropQuadOverlay({
     super.key,
     required this.quad,
     required this.onChanged,
     this.imagePath,
+    this.isVi = true,
   });
 
   @override
@@ -52,13 +54,16 @@ class _CropQuadOverlayState extends State<CropQuadOverlay> {
               ),
             ),
 
-            // Kính lúp phóng đại góc 2.5x (Circular Magnifier Loupe - Stitch Screen 5)
+            // Kính lúp phóng đại góc 2.5x (hiển thị chính xác điểm đang kéo tại tâm chữ thập)
             Positioned(
-              left: activeCorner.x > 0.45 ? 10 : null,
-              right: activeCorner.x <= 0.45 ? 10 : null,
-              top: 10,
+              left: activeCorner.x > 0.48 ? 8 : null,
+              right: activeCorner.x <= 0.48 ? 8 : null,
+              top: activeCorner.y < 0.32 ? null : 8,
+              bottom: activeCorner.y < 0.32 ? 8 : null,
               child: _buildMagnifierLoupe(
                 activeCorner: activeCorner,
+                canvasWidth: width,
+                canvasHeight: height,
                 lineColor: lineColor,
               ),
             ),
@@ -68,7 +73,7 @@ class _CropQuadOverlayState extends State<CropQuadOverlay> {
               final corner = widget.quad.corners[index];
               final cx = corner.x * width;
               final cy = corner.y * height;
-              const handleRadius = 24.0;
+              const handleRadius = 26.0;
               final isSelected = _activeCornerIndex == index;
 
               return Positioned(
@@ -76,6 +81,9 @@ class _CropQuadOverlayState extends State<CropQuadOverlay> {
                 top: cy - handleRadius,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) {
+                    setState(() => _activeCornerIndex = index);
+                  },
                   onPanStart: (_) {
                     setState(() {
                       _activeCornerIndex = index;
@@ -138,78 +146,100 @@ class _CropQuadOverlayState extends State<CropQuadOverlay> {
 
   Widget _buildMagnifierLoupe({
     required NormalizedPoint activeCorner,
+    required double canvasWidth,
+    required double canvasHeight,
     required Color lineColor,
   }) {
     final imgFile =
         widget.imagePath != null ? File(widget.imagePath!) : null;
     final hasImage = imgFile != null && imgFile.existsSync();
+    const double loupeSize = 86.0;
+    const double zoom = 2.5;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 82,
-          height: 82,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1C2126),
-            shape: BoxShape.circle,
-            border: Border.all(color: lineColor, width: 2.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.55),
-                blurRadius: 14,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: ClipOval(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (hasImage)
-                  Transform.scale(
-                    scale: 2.5,
-                    alignment: Alignment(
-                      (activeCorner.x * 2 - 1).clamp(-1.0, 1.0),
-                      (activeCorner.y * 2 - 1).clamp(-1.0, 1.0),
-                    ),
-                    child: Image.file(
-                      imgFile,
-                      fit: BoxFit.cover,
-                    ),
-                  )
-                else
-                  Container(color: const Color(0xFF101316)),
-                // Crosshair reticle
-                CustomPaint(
-                  painter: _LoupeCrosshairPainter(color: lineColor),
+    // Dịch chuyển ảnh đã phóng to sao cho tọa độ (activeCorner.x * canvasWidth, activeCorner.y * canvasHeight)
+    // nằm chính xác tại tâm kính lúp (loupeSize / 2, loupeSize / 2).
+    final double offsetX =
+        (loupeSize / 2.0) - (activeCorner.x * canvasWidth * zoom);
+    final double offsetY =
+        (loupeSize / 2.0) - (activeCorner.y * canvasHeight * zoom);
+
+    return IgnorePointer(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: loupeSize,
+            height: loupeSize,
+            decoration: BoxDecoration(
+              color: const Color(0xFF101316),
+              shape: BoxShape.circle,
+              border: Border.all(color: lineColor, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.6),
+                  blurRadius: 14,
+                  offset: const Offset(0, 4),
                 ),
               ],
             ),
-          ),
-        ),
-        Transform.translate(
-          offset: const Offset(0, -6),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0xFF00695C),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: lineColor.withValues(alpha: 0.6),
+            child: ClipOval(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (hasImage)
+                     OverflowBox(
+                      alignment: Alignment.topLeft,
+                      minWidth: canvasWidth * zoom,
+                      maxWidth: canvasWidth * zoom,
+                      minHeight: canvasHeight * zoom,
+                      maxHeight: canvasHeight * zoom,
+                      child: Transform.translate(
+                        offset: Offset(offsetX, offsetY),
+                        child: SizedBox(
+                          width: canvasWidth * zoom,
+                          height: canvasHeight * zoom,
+                          child: Image.file(
+                            imgFile,
+                            fit: BoxFit.fill,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Container(color: const Color(0xFF101316)),
+                  // Tâm ngắm chữ thập
+                  CustomPaint(
+                    painter: _LoupeCrosshairPainter(color: lineColor),
+                  ),
+                ],
               ),
             ),
-            child: Text(
-              'Phóng đại 2.5x • Góc ${_activeCornerIndex + 1}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 8.5,
-                fontWeight: FontWeight.w700,
+          ),
+          Transform.translate(
+            offset: const Offset(0, -6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFF00695C),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: lineColor.withValues(alpha: 0.6),
+                ),
+              ),
+              child: Text(
+                widget.isVi
+                    ? 'Phóng đại 2.5x • Góc ${_activeCornerIndex + 1}'
+                    : 'Zoom 2.5x • Corner ${_activeCornerIndex + 1}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 8.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -222,8 +252,8 @@ class _LoupeCrosshairPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final p = Paint()
-      ..color = color.withValues(alpha: 0.75)
-      ..strokeWidth = 1.0;
+      ..color = color.withValues(alpha: 0.78)
+      ..strokeWidth = 1.1;
     canvas.drawLine(
       Offset(size.width / 2, 0),
       Offset(size.width / 2, size.height),
@@ -236,7 +266,7 @@ class _LoupeCrosshairPainter extends CustomPainter {
     );
     canvas.drawCircle(
       Offset(size.width / 2, size.height / 2),
-      4,
+      3.5,
       Paint()..color = color,
     );
   }

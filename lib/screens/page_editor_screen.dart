@@ -12,9 +12,9 @@ import '../widgets/signature_pad_dialog.dart';
 /// Màn hình chỉnh sửa không phá hủy (non-destructive) một trang tài liệu (Stitch Screen 5):
 /// - Nền Studio Dark (`#14171A`) kèm lưới chấm bi kỹ thuật (`#101316`).
 /// - Thanh công cụ trợ giúp AI phía trên (`✨ AI Bắt Mép Tự Động`, `Toàn Trang`, `Khử Bóng & Nếp Gấp`, `🔒 Không phá hủy ảnh gốc`).
-/// - Chỉnh 4 góc phối cảnh trực tiếp trên ảnh gốc (`originalImagePath`) kèm kính lúp phóng đại 2.5x.
-/// - Xoay 90°, chọn bộ lọc màu (Gốc, Màu sắc nét, Thang xám, Trắng đen, Tương phản cao).
-/// - Ký tên tay (Mực xanh) & Đóng dấu đỏ (`★ ĐÃ ĐỐI CHIẾU AI ★`) kéo thả trực tiếp trên trang.
+/// - Chỉnh 4 góc phối cảnh trực tiếp trên ảnh gốc (`originalImagePath`) theo đúng tỷ lệ ảnh thật kèm kính lúp phóng đại 2.5x.
+/// - Ký tên tay & Đóng dấu đỏ kéo thả trực tiếp trên trang; khi kéo thả sẽ hiện vùng Thùng Rác (Drag-to-Delete Trash Zone) ở dưới để xóa dễ dàng thay vì nút (x) nhỏ.
+/// - Hỗ trợ song ngữ Tiếng Việt & Tiếng Anh.
 class PageEditorScreen extends StatefulWidget {
   final AppState appState;
   final ScanPage initialPage;
@@ -40,6 +40,29 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
 
   bool _isCropMode = false;
   bool _isSaving = false;
+  double _imageAspectRatio = 0.72;
+
+  // Trạng thái kéo thả Chữ ký / Con dấu vào thùng rác để xóa
+  int? _draggingAnnotationIndex;
+  bool _isHoveringTrash = false;
+
+  String _tr(String vi, String en) => widget.appState.tr(vi, en);
+
+  String _filterLabel(ScanFilterType filter) {
+    if (widget.appState.isVi) return filter.label;
+    switch (filter) {
+      case ScanFilterType.original:
+        return 'Original';
+      case ScanFilterType.magicColor:
+        return 'Magic Color';
+      case ScanFilterType.grayscale:
+        return 'Grayscale';
+      case ScanFilterType.blackAndWhite:
+        return 'B&W Clean';
+      case ScanFilterType.highContrast:
+        return 'High Contrast';
+    }
+  }
 
   @override
   void initState() {
@@ -49,6 +72,17 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     _rotationDegrees = _page.rotationDegrees;
     _selectedFilter = _page.filter;
     _annotations = List<PageAnnotation>.from(_page.annotations);
+    _loadOriginalImageAspectRatio();
+  }
+
+  Future<void> _loadOriginalImageAspectRatio() async {
+    final dims = await widget.appState.visionService
+        .getOrientedImageDimensions(_page.originalImagePath);
+    if (dims != null && dims.height > 0 && mounted) {
+      setState(() {
+        _imageAspectRatio = (dims.width / dims.height).clamp(0.45, 1.85);
+      });
+    }
   }
 
   Future<void> _autoDetectCorners() async {
@@ -69,9 +103,12 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   Future<void> _applyChanges({bool closeAfterSave = false}) async {
     if (!_editingQuad.isValidQuad) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Vùng chọn 4 góc bị tự cắt hoặc quá nhỏ. Vui lòng chỉnh lại 4 góc.',
+            _tr(
+              'Vùng chọn 4 góc bị tự cắt hoặc quá nhỏ. Vui lòng chỉnh lại 4 góc.',
+              'The 4-corner selection is self-intersecting or too small. Please adjust the 4 corners.',
+            ),
           ),
         ),
       );
@@ -97,11 +134,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         Navigator.of(context).pop(updated);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Đã cập nhật trang & nhận dạng lại AI OCR (Ảnh gốc được giữ nguyên).',
+              _tr(
+                'Đã cập nhật trang & nhận dạng lại AI OCR (Ảnh gốc được giữ nguyên).',
+                'Page updated & AI OCR re-evaluated (Original image preserved).',
+              ),
             ),
-            duration: Duration(seconds: 2),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -122,25 +162,41 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     final newAnnotation = PageAnnotation(
       id: _uuid.v4(),
       kind: AnnotationKind.signature,
-      x: 0.56,
-      y: 0.74,
+      x: 0.52,
+      y: 0.66,
       width: 0.34,
       height: 0.13,
       imagePath: savedSigPath,
     );
 
     setState(() {
+      _isCropMode = false;
       _annotations.add(newAnnotation);
     });
   }
 
   Future<void> _openNoteDialog() async {
-    final controller =
-        TextEditingController(text: '★ ĐÃ ĐỐI CHIẾU AI ★');
+    final defaultStamp =
+        _tr('★ ĐÃ ĐỐI CHIẾU AI ★', '★ AI VERIFIED COPY ★');
+    final controller = TextEditingController(text: defaultStamp);
+    final presets = widget.appState.isVi
+        ? [
+            '★ ĐÃ ĐỐI CHIẾU AI ★',
+            'SAO Y BẢN CHÍNH',
+            'ĐÃ KÝ DUYỆT',
+            'BẢO MẬT NỘI BỘ',
+          ]
+        : [
+            '★ AI VERIFIED COPY ★',
+            'CERTIFIED TRUE COPY',
+            'APPROVED & SIGNED',
+            'CONFIDENTIAL',
+          ];
+
     final text = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Đóng dấu / Thêm ghi chú'),
+        title: Text(_tr('Đóng dấu / Thêm ghi chú', 'Add Stamp / Annotation')),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -148,22 +204,17 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             TextField(
               controller: controller,
               autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Nội dung con dấu đỏ',
-                hintText: 'Ví dụ: ★ ĐÃ ĐỐI CHIẾU AI ★ / SAO Y BẢN CHÍNH',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: _tr('Nội dung con dấu đỏ', 'Red stamp text'),
+                hintText: defaultStamp,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
             Wrap(
               spacing: 6,
               runSpacing: 6,
-              children: [
-                '★ ĐÃ ĐỐI CHIẾU AI ★',
-                'SAO Y BẢN CHÍNH',
-                'ĐÃ KÝ DUYỆT',
-                'BẢO MẬT NỘI BỘ',
-              ]
+              children: presets
                   .map(
                     (preset) => ActionChip(
                       label: Text(
@@ -180,11 +231,11 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(null),
-            child: const Text('Hủy'),
+            child: Text(_tr('Hủy', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('Đóng dấu'),
+            child: Text(_tr('Đóng dấu', 'Apply Stamp')),
           ),
         ],
       ),
@@ -192,12 +243,13 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
 
     if (text == null || text.isEmpty || !mounted) return;
     setState(() {
+      _isCropMode = false;
       _annotations.add(
         PageAnnotation(
           id: _uuid.v4(),
           kind: AnnotationKind.note,
-          x: 0.08,
-          y: 0.76,
+          x: 0.12,
+          y: 0.68,
           width: 0.44,
           height: 0.09,
           text: text,
@@ -241,7 +293,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'AI OCR Trang ${_page.pageIndex + 1}',
+                              _tr(
+                                'AI OCR Trang ${_page.pageIndex + 1}',
+                                'AI OCR Page ${_page.pageIndex + 1}',
+                              ),
                               style: Theme.of(context)
                                   .textTheme
                                   .titleMedium
@@ -259,16 +314,19 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                                     updated.ocrResult?.fullText ?? '';
                               });
                             },
-                            tooltip:
-                                'Quét lại bằng AI OCR (Tiếng Việt & Chữ viết tay)',
+                            tooltip: _tr(
+                              'Quét lại bằng AI OCR',
+                              'Re-run AI OCR',
+                            ),
                             icon: const Icon(Icons.refresh_rounded, size: 20),
                           ),
                           IconButton(
                             onPressed: () {
                               setSheetState(() => isEditing = !isEditing);
                             },
-                            tooltip:
-                                isEditing ? 'Xem văn bản' : 'Sửa văn bản',
+                            tooltip: isEditing
+                                ? _tr('Xem văn bản', 'View text')
+                                : _tr('Sửa văn bản', 'Edit text'),
                             icon: Icon(
                               isEditing
                                   ? Icons.visibility_outlined
@@ -284,14 +342,17 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                                       ClipboardData(text: currentText),
                                     );
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
+                                      SnackBar(
                                         content: Text(
-                                          'Đã sao chép văn bản OCR vào bộ nhớ tạm.',
+                                          _tr(
+                                            'Đã sao chép văn bản OCR vào bộ nhớ tạm.',
+                                            'Copied OCR text to clipboard.',
+                                          ),
                                         ),
                                       ),
                                     );
                                   },
-                            tooltip: 'Sao chép',
+                            tooltip: _tr('Sao chép', 'Copy'),
                             icon: const Icon(Icons.copy_rounded, size: 19),
                           ),
                           IconButton(
@@ -299,10 +360,12 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                                 ? null
                                 : () => widget.appState.shareOcrText(
                                       currentText,
-                                      subject:
-                                          'OCR Trang ${_page.pageIndex + 1}',
+                                      subject: _tr(
+                                        'OCR Trang ${_page.pageIndex + 1}',
+                                        'OCR Page ${_page.pageIndex + 1}',
+                                      ),
                                     ),
-                            tooltip: 'Chia sẻ văn bản',
+                            tooltip: _tr('Chia sẻ văn bản', 'Share text'),
                             icon:
                                 const Icon(Icons.ios_share_rounded, size: 19),
                           ),
@@ -317,8 +380,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                                 expands: true,
                                 textAlignVertical: TextAlignVertical.top,
                                 decoration: InputDecoration(
-                                  hintText:
-                                      'Chỉnh sửa văn bản Tiếng Việt / chữ viết tay...',
+                                  hintText: _tr(
+                                    'Chỉnh sửa văn bản Tiếng Việt / chữ viết tay...',
+                                    'Edit recognized text...',
+                                  ),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
@@ -337,7 +402,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                                   controller: scrollController,
                                   child: SelectableText(
                                     currentText.isEmpty
-                                        ? '(Chưa phát hiện văn bản trên trang này — bấm nút làm mới ↻ để quét lại bằng AI OCR)'
+                                        ? _tr(
+                                            '(Chưa phát hiện văn bản trên trang này — bấm nút làm mới ↻ để quét lại bằng AI OCR)',
+                                            '(No text detected on this page yet — tap ↻ to re-run AI OCR)',
+                                          )
                                         : currentText,
                                     style: const TextStyle(
                                       fontSize: 15,
@@ -363,7 +431,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                               setSheetState(() => isEditing = false);
                             },
                             icon: const Icon(Icons.save_outlined, size: 18),
-                            label: const Text('Lưu văn bản đã chỉnh sửa'),
+                            label: Text(
+                              _tr('Lưu văn bản đã chỉnh sửa', 'Save edited text'),
+                            ),
                           ),
                         ),
                       ],
@@ -391,8 +461,8 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
           children: [
             Text(
               _isCropMode
-                  ? 'Chỉnh 4 góc & Phối cảnh'
-                  : 'Chỉnh 4 góc & Ký tên',
+                  ? _tr('Chỉnh 4 góc & Phối cảnh', '4-Corner Perspective Crop')
+                  : _tr('Chỉnh 4 góc & Ký tên', 'Crop, Sign & Stamp'),
               style: const TextStyle(
                 fontSize: 15.5,
                 fontWeight: FontWeight.w700,
@@ -410,11 +480,17 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                   ),
                 ),
                 const SizedBox(width: 5),
-                Text(
-                  'Chế độ không phá hủy ảnh gốc • Trang ${_page.pageIndex + 1}',
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    color: StitchTheme.textDarkMuted,
+                Flexible(
+                  child: Text(
+                    _tr(
+                      'Chế độ không phá hủy ảnh gốc • Trang ${_page.pageIndex + 1}',
+                      'Non-destructive mode • Page ${_page.pageIndex + 1}',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      color: StitchTheme.textDarkMuted,
+                    ),
                   ),
                 ),
               ],
@@ -428,7 +504,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
               backgroundColor: Colors.white.withValues(alpha: 0.08),
               minimumSize: const Size(36, 36),
             ),
-            tooltip: 'Văn bản AI OCR',
+            tooltip: _tr('Văn bản AI OCR', 'AI OCR Text'),
             icon: const Icon(
               Icons.auto_awesome_rounded,
               size: 18,
@@ -463,9 +539,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                       ),
                     )
                   : const Icon(Icons.check_rounded, size: 17),
-              label: const Text(
-                'Lưu',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              label: Text(
+                _tr('Lưu', 'Save'),
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -516,14 +593,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
           children: [
             _buildAssistChip(
               icon: Icons.auto_fix_high_rounded,
-              label: 'AI Bắt Mép Tự Động',
+              label: _tr('AI Bắt Mép Tự Động', 'AI Auto-Edge'),
               isHighlighted: true,
               onTap: _autoDetectCorners,
             ),
             const SizedBox(width: 8),
             _buildAssistChip(
               icon: Icons.crop_free_rounded,
-              label: 'Toàn Trang',
+              label: _tr('Toàn Trang', 'Full Page'),
               onTap: () {
                 setState(() {
                   _editingQuad = CropQuad.fullPage();
@@ -534,7 +611,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             const SizedBox(width: 8),
             _buildAssistChip(
               icon: Icons.wb_twilight_rounded,
-              label: 'Khử Bóng & Nếp Gấp',
+              label: _tr('Khử Bóng & Nếp Gấp', 'Remove Shadows'),
               onTap: () {
                 setState(() => _selectedFilter = ScanFilterType.magicColor);
                 _applyChanges();
@@ -550,18 +627,18 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                   color: Colors.white.withValues(alpha: 0.1),
                 ),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.lock_outline_rounded,
                     size: 13,
                     color: Color(0xFF34D399),
                   ),
-                  SizedBox(width: 4),
+                  const SizedBox(width: 4),
                   Text(
-                    'Không phá hủy ảnh gốc',
-                    style: TextStyle(
+                    _tr('Không phá hủy ảnh gốc', 'Non-destructive'),
+                    style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
                       color: StitchTheme.textDarkMuted,
@@ -624,45 +701,51 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
     );
   }
 
-  /// Chế độ cắt 4 góc hiển thị trên `originalImagePath` (không phá hủy ảnh gốc).
+  /// Chế độ cắt 4 góc hiển thị đúng tỷ lệ ảnh gốc (`_imageAspectRatio`) kèm đệm viền 16px
+  /// để 4 nút kéo góc luôn thông thoáng, dễ chạm.
   Widget _buildCropCanvas() {
     final origFile = File(_page.originalImagePath);
     if (!origFile.existsSync()) {
-      return const Text(
-        'Không tìm thấy ảnh gốc.',
-        style: TextStyle(color: Colors.white),
+      return Text(
+        _tr('Không tìm thấy ảnh gốc.', 'Original image not found.'),
+        style: const TextStyle(color: Colors.white),
       );
     }
 
     return Column(
       children: [
         Expanded(
-          child: Center(
-            child: AspectRatio(
-              aspectRatio: 0.72,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.file(
-                      origFile,
-                      fit: BoxFit.fill,
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: _imageAspectRatio,
+                child: Stack(
+                  fit: StackFit.expand,
+                  clipBehavior: Clip.none,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(
+                        origFile,
+                        fit: BoxFit.fill,
+                      ),
                     ),
-                  ),
-                  CropQuadOverlay(
-                    quad: _editingQuad,
-                    imagePath: _page.originalImagePath,
-                    onChanged: (newQuad) {
-                      setState(() => _editingQuad = newQuad);
-                    },
-                  ),
-                ],
+                    CropQuadOverlay(
+                      quad: _editingQuad,
+                      imagePath: _page.originalImagePath,
+                      isVi: widget.appState.isVi,
+                      onChanged: (newQuad) {
+                        setState(() => _editingQuad = newQuad);
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -674,7 +757,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                 visualDensity: VisualDensity.compact,
               ),
               icon: const Icon(Icons.close_rounded, size: 16),
-              label: const Text('Hủy cắt'),
+              label: Text(_tr('Hủy cắt', 'Cancel')),
             ),
             const SizedBox(width: 10),
             FilledButton.icon(
@@ -685,7 +768,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                 visualDensity: VisualDensity.compact,
               ),
               icon: const Icon(Icons.check_rounded, size: 17),
-              label: const Text('Áp dụng 4 góc'),
+              label: Text(_tr('Áp dụng 4 góc', 'Apply 4 Corners')),
             ),
           ],
         ),
@@ -694,12 +777,14 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   }
 
   /// Chế độ xem ảnh đã xử lý kèm kéo thả vị trí chữ ký và con dấu đỏ.
+  /// Khi kéo thả bất kỳ chữ ký hoặc con dấu nào, hiện vùng Thùng Rác (Drag-to-Delete Trash Bin)
+  /// ở cạnh dưới để xóa cực nhạy và trực quan thay vì dấu (x) nhỏ.
   Widget _buildProcessedPreviewWithAnnotations() {
     final displayFile = File(_page.displayImagePath);
     if (!displayFile.existsSync()) {
-      return const Text(
-        'Không tìm thấy tệp ảnh hiển thị.',
-        style: TextStyle(color: Colors.white),
+      return Text(
+        _tr('Không tìm thấy tệp ảnh hiển thị.', 'Processed image not found.'),
+        style: const TextStyle(color: Colors.white),
       );
     }
 
@@ -718,37 +803,149 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                 fit: BoxFit.contain,
               ),
             ),
+
+            // Các lớp Chữ ký & Con dấu có thể kéo thả
             ...List.generate(_annotations.length, (idx) {
               final ann = _annotations[idx];
               final left = (ann.x * w).clamp(0.0, w - 80);
               final top = (ann.y * h).clamp(0.0, h - 50);
+              final isBeingDragged = _draggingAnnotationIndex == idx;
 
               return Positioned(
                 left: left,
                 top: top,
                 child: GestureDetector(
+                  onPanStart: (_) {
+                    HapticFeedback.selectionClick();
+                    setState(() {
+                      _draggingAnnotationIndex = idx;
+                      _isHoveringTrash = false;
+                    });
+                  },
                   onPanUpdate: (d) {
                     final nx = ((left + d.delta.dx) / w).clamp(0.02, 0.85);
-                    final ny = ((top + d.delta.dy) / h).clamp(0.02, 0.88);
+                    final ny = ((top + d.delta.dy) / h).clamp(0.02, 0.90);
+                    // Kiểm tra nếu kéo xuống vùng Thùng Rác ở đáy canvas (ny >= 0.78 và nằm gần giữa)
+                    final nowHoveringTrash =
+                        ny >= 0.76 && nx >= 0.15 && nx <= 0.75;
+                    if (nowHoveringTrash != _isHoveringTrash) {
+                      HapticFeedback.lightImpact();
+                    }
                     setState(() {
                       _annotations[idx] = ann.copyWith(x: nx, y: ny);
+                      _isHoveringTrash = nowHoveringTrash;
                     });
                   },
-                  onLongPress: () {
+                  onPanEnd: (_) {
+                    if (_isHoveringTrash &&
+                        _draggingAnnotationIndex != null &&
+                        _draggingAnnotationIndex! < _annotations.length) {
+                      final removedKind =
+                          _annotations[_draggingAnnotationIndex!].kind;
+                      HapticFeedback.mediumImpact();
+                      setState(() {
+                        _annotations.removeAt(_draggingAnnotationIndex!);
+                        _draggingAnnotationIndex = null;
+                        _isHoveringTrash = false;
+                      });
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            removedKind == AnnotationKind.signature
+                                ? _tr('Đã xóa chữ ký.', 'Signature deleted.')
+                                : _tr('Đã xóa con dấu.', 'Stamp deleted.'),
+                          ),
+                          duration: const Duration(seconds: 1),
+                        ),
+                      );
+                    } else {
+                      setState(() {
+                        _draggingAnnotationIndex = null;
+                        _isHoveringTrash = false;
+                      });
+                    }
+                  },
+                  onPanCancel: () {
                     setState(() {
-                      _annotations.removeAt(idx);
+                      _draggingAnnotationIndex = null;
+                      _isHoveringTrash = false;
                     });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Đã xóa chữ ký / con dấu.'),
-                        duration: Duration(seconds: 1),
-                      ),
-                    );
                   },
-                  child: _buildAnnotationWidget(ann, w, idx),
+                  child: AnimatedScale(
+                    scale: isBeingDragged
+                        ? (_isHoveringTrash ? 0.82 : 1.06)
+                        : 1.0,
+                    duration: const Duration(milliseconds: 120),
+                    child: AnimatedOpacity(
+                      opacity: isBeingDragged && _isHoveringTrash ? 0.65 : 1.0,
+                      duration: const Duration(milliseconds: 120),
+                      child: _buildAnnotationWidget(ann, w, isBeingDragged),
+                    ),
+                  ),
                 ),
               );
             }),
+
+            // Vùng Thùng Rác Xóa (chỉ hiện lên khi đang kéo Chữ ký hoặc Con dấu)
+            if (_draggingAnnotationIndex != null)
+              Positioned(
+                bottom: 8,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: _isHoveringTrash ? 24 : 18,
+                    vertical: _isHoveringTrash ? 13 : 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _isHoveringTrash
+                        ? const Color(0xFFDC2626)
+                        : const Color(0xFF1C2126).withValues(alpha: 0.94),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: _isHoveringTrash
+                          ? Colors.white
+                          : const Color(0xFFEF4444).withValues(alpha: 0.75),
+                      width: _isHoveringTrash ? 2.2 : 1.5,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (_isHoveringTrash
+                                ? const Color(0xFFEF4444)
+                                : Colors.black)
+                            .withValues(alpha: 0.45),
+                        blurRadius: _isHoveringTrash ? 20 : 12,
+                        spreadRadius: _isHoveringTrash ? 2 : 0,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isHoveringTrash
+                            ? Icons.delete_forever_rounded
+                            : Icons.delete_outline_rounded,
+                        color: Colors.white,
+                        size: _isHoveringTrash ? 24 : 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _isHoveringTrash
+                            ? _tr('Thả tay để xóa ngay', 'Release to delete')
+                            : _tr(
+                                'Kéo vào thùng rác để xóa',
+                                'Drag here to delete',
+                              ),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: _isHoveringTrash ? 13 : 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -758,7 +955,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
   Widget _buildAnnotationWidget(
     PageAnnotation ann,
     double containerWidth,
-    int index,
+    bool isBeingDragged,
   ) {
     if (ann.kind == AnnotationKind.signature && ann.imagePath != null) {
       final sigFile = File(ann.imagePath!);
@@ -772,8 +969,10 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF00695C).withValues(alpha: 0.08),
                 border: Border.all(
-                  color: const Color(0xFF00DAF3),
-                  width: 1.5,
+                  color: isBeingDragged
+                      ? const Color(0xFF5FFBD6)
+                      : const Color(0xFF00DAF3),
+                  width: isBeingDragged ? 2.0 : 1.5,
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -789,34 +988,12 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                   color: StitchTheme.primaryContainer,
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: const Text(
-                  'Chữ ký tay • Mực xanh',
-                  style: TextStyle(
+                child: Text(
+                  _tr('Chữ ký tay • Kéo để di chuyển', 'Signature • Drag to move'),
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 8.5,
                     fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              top: -8,
-              right: -8,
-              child: GestureDetector(
-                onTap: () {
-                  setState(() => _annotations.removeAt(index));
-                },
-                child: Container(
-                  width: 18,
-                  height: 18,
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFEF4444),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.close_rounded,
-                    size: 12,
-                    color: Colors.white,
                   ),
                 ),
               ),
@@ -826,77 +1003,52 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
       }
     }
 
-    // Con dấu đỏ chứng thực 2 lớp viền chuẩn Stitch Screen 5
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Transform.rotate(
-          angle: -0.14,
-          child: Container(
-            padding: const EdgeInsets.all(2.5),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.9),
-              border: Border.all(color: Color(ann.colorArgb), width: 2.2),
-              borderRadius: BorderRadius.circular(6),
+    // Con dấu đỏ chứng thực 2 lớp viền chuẩn Stitch Screen 5 (không có nút x nhỏ)
+    return Transform.rotate(
+      angle: -0.14,
+      child: Container(
+        padding: const EdgeInsets.all(2.5),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.92),
+          border: Border.all(
+            color: Color(ann.colorArgb),
+            width: isBeingDragged ? 2.6 : 2.2,
+          ),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: Color(ann.colorArgb).withValues(alpha: 0.65),
+              width: 1,
             ),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: Color(ann.colorArgb).withValues(alpha: 0.65),
-                  width: 1,
+            borderRadius: BorderRadius.circular(3),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                ann.text ?? _tr('★ ĐÃ ĐỐI CHIẾU AI ★', '★ AI VERIFIED ★'),
+                style: TextStyle(
+                  color: Color(ann.colorArgb),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 10.5,
+                  letterSpacing: 0.4,
                 ),
-                borderRadius: BorderRadius.circular(3),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    ann.text ?? '★ ĐÃ ĐỐI CHIẾU AI ★',
-                    style: TextStyle(
-                      color: Color(ann.colorArgb),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 10.5,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                  Text(
-                    'SAO Y BẢN CHÍNH',
-                    style: TextStyle(
-                      color: Color(ann.colorArgb).withValues(alpha: 0.85),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 8,
-                    ),
-                  ),
-                ],
+              Text(
+                _tr('SAO Y BẢN CHÍNH', 'CERTIFIED COPY'),
+                style: TextStyle(
+                  color: Color(ann.colorArgb).withValues(alpha: 0.85),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 8,
+                ),
               ),
-            ),
+            ],
           ),
         ),
-        Positioned(
-          top: -8,
-          right: -8,
-          child: GestureDetector(
-            onTap: () {
-              setState(() => _annotations.removeAt(index));
-            },
-            child: Container(
-              width: 18,
-              height: 18,
-              decoration: const BoxDecoration(
-                color: Color(0xFFEF4444),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.close_rounded,
-                size: 12,
-                color: Colors.white,
-              ),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -910,9 +1062,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'BỘ LỌC MÀU TÀI LIỆU',
-                style: TextStyle(
+              Text(
+                _tr('BỘ LỌC MÀU TÀI LIỆU', 'DOCUMENT COLOR FILTERS'),
+                style: const TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.8,
@@ -920,7 +1072,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                 ),
               ),
               Text(
-                'Đang dùng: ${_selectedFilter.label}',
+                '${_tr('Đang dùng', 'Active')}: ${_filterLabel(_selectedFilter)}',
                 style: const TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w600,
@@ -976,7 +1128,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
                           const SizedBox(width: 5),
                         ],
                         Text(
-                          filter.label,
+                          _filterLabel(filter),
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: selected
@@ -1013,7 +1165,9 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             Expanded(
               child: _toolbarButton(
                 icon: _isCropMode ? Icons.image_outlined : Icons.crop_rounded,
-                label: _isCropMode ? 'Xem trang' : 'Cắt 4 góc',
+                label: _isCropMode
+                    ? _tr('Xem trang', 'Preview')
+                    : _tr('Cắt 4 góc', 'Crop 4-Pt'),
                 active: _isCropMode,
                 onTap: () => setState(() => _isCropMode = !_isCropMode),
               ),
@@ -1022,7 +1176,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             Expanded(
               child: _toolbarButton(
                 icon: Icons.rotate_90_degrees_cw_outlined,
-                label: 'Xoay 90°',
+                label: _tr('Xoay 90°', 'Rotate 90°'),
                 onTap: _isSaving
                     ? null
                     : () {
@@ -1037,7 +1191,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             Expanded(
               child: _toolbarButton(
                 icon: Icons.draw_rounded,
-                label: 'Ký tên',
+                label: _tr('Ký tên', 'Sign'),
                 hasBadgeDot: true,
                 onTap: _openSignaturePad,
               ),
@@ -1046,7 +1200,7 @@ class _PageEditorScreenState extends State<PageEditorScreen> {
             Expanded(
               child: _toolbarButton(
                 icon: Icons.approval_rounded,
-                label: 'Đóng dấu',
+                label: _tr('Đóng dấu', 'Stamp'),
                 onTap: _openNoteDialog,
               ),
             ),

@@ -17,10 +17,12 @@ import '../theme/stitch_theme.dart';
 ///   và cụm nút chụp 2 vòng (Dual-Ring Shutter `78px`) ở vùng ngón cái dưới cùng (`#0F1215`).
 class ScannerScreen extends StatefulWidget {
   final bool singleShotMode;
+  final bool isVi;
 
   const ScannerScreen({
     super.key,
     this.singleShotMode = false,
+    this.isVi = true,
   });
 
   @override
@@ -32,6 +34,8 @@ class _ScannerScreenState extends State<ScannerScreen>
   CameraController? _controller;
   final ImagePicker _picker = ImagePicker();
   late final AnimationController _laserController;
+
+  String _tr(String vi, String en) => widget.isVi ? vi : en;
 
   bool _initializingCamera = true;
   String? _cameraError;
@@ -276,15 +280,18 @@ class _ScannerScreenState extends State<ScannerScreen>
     int paperCount = 0;
     int edgeCount = 0;
 
-    for (int gy = 1; gy < gH - 1; gy++) {
-      for (int gx = 1; gx < gW - 1; gx++) {
+    final marginX = (gW * 0.05).round().clamp(2, 8);
+    final marginY = (gH * 0.05).round().clamp(2, 8);
+
+    for (int gy = marginY; gy < gH - marginY; gy++) {
+      for (int gx = marginX; gx < gW - marginX; gx++) {
         final idx = gy * gW + gx;
         final v = grid[idx];
         if (v >= threshold) {
           paperCount++;
           final grad = (grid[idx + 1] - grid[idx - 1]).abs() +
               (grid[idx + gW] - grid[idx - gW]).abs();
-          if (grad > 22) {
+          if (grad > 24) {
             edgeCount++;
             final double nx = Platform.isIOS
                 ? gx / (gW - 1)
@@ -323,7 +330,7 @@ class _ScannerScreenState extends State<ScannerScreen>
         bl == null ||
         edgeCount < 14 ||
         ratio < 0.08 ||
-        ratio > 0.94) {
+        ratio > 0.88) {
       return null;
     }
 
@@ -333,7 +340,11 @@ class _ScannerScreenState extends State<ScannerScreen>
       bottomRight: br.clamp(),
       bottomLeft: bl.clamp(),
     );
-    return (quad.isValidQuad && quad.normalizedArea >= 0.08) ? quad : null;
+    return (quad.isValidQuad &&
+            quad.normalizedArea >= 0.10 &&
+            quad.normalizedArea <= 0.86)
+        ? quad
+        : null;
   }
 
   Future<void> _capturePhoto({bool fromAutoTrigger = false}) async {
@@ -622,8 +633,8 @@ class _ScannerScreenState extends State<ScannerScreen>
                           const SizedBox(width: 8),
                           Text(
                             hasDoc
-                                ? 'Giữ yên... Tự chụp AI'
-                                : 'Hướng vào giấy để AI bắt mép',
+                                ? _tr('Giữ yên... Tự chụp AI', 'Hold steady... AI Auto')
+                                : _tr('Hướng vào giấy để AI bắt mép', 'Point at document for AI edge'),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,
@@ -668,7 +679,9 @@ class _ScannerScreenState extends State<ScannerScreen>
                                 ),
                                 const SizedBox(width: 5),
                                 Text(
-                                  _aiAutoCapture ? 'Tự chụp' : 'Chụp tay',
+                                  _aiAutoCapture
+                                      ? _tr('Tự chụp', 'Auto')
+                                      : _tr('Chụp tay', 'Manual'),
                                   style: TextStyle(
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w600,
@@ -713,25 +726,28 @@ class _ScannerScreenState extends State<ScannerScreen>
                         color: StitchTheme.primaryDarkAccent.withValues(alpha: 0.45),
                       ),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.auto_awesome_rounded,
                           size: 15,
                           color: StitchTheme.secondaryFixed,
                         ),
-                        SizedBox(width: 6),
+                        const SizedBox(width: 6),
                         Text(
-                          'AI Tự Động Làm Phẳng & Khử Bóng Mờ',
-                          style: TextStyle(
+                          _tr(
+                            'AI Tự Động Làm Phẳng & Khử Bóng Mờ',
+                            'AI Auto-Flatten & Shadow Removal',
+                          ),
+                          style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                             color: StitchTheme.primaryFixed,
                           ),
                         ),
-                        SizedBox(width: 5),
-                        Icon(
+                        const SizedBox(width: 5),
+                        const Icon(
                           Icons.verified_rounded,
                           size: 14,
                           color: StitchTheme.tertiaryFixedDim,
@@ -904,7 +920,9 @@ class _ScannerScreenState extends State<ScannerScreen>
                     ),
                     const SizedBox(width: 5),
                     Text(
-                      _goodLighting ? 'Ánh sáng tốt' : 'Thiếu sáng',
+                      _goodLighting
+                          ? _tr('Ánh sáng tốt', 'Good lighting')
+                          : _tr('Thiếu sáng', 'Low light'),
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -974,9 +992,9 @@ class _ScannerScreenState extends State<ScannerScreen>
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Thư viện',
-                      style: TextStyle(
+                    Text(
+                      _tr('Thư viện', 'Gallery'),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
                         color: StitchTheme.surfaceContainerHighest,
@@ -1133,9 +1151,9 @@ class _ScannerScreenState extends State<ScannerScreen>
                         ),
                       ),
                       const SizedBox(height: 4),
-                      const Text(
-                        'AI Gốc',
-                        style: TextStyle(
+                      Text(
+                        _tr('AI Gốc', 'Native AI'),
+                        style: const TextStyle(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w600,
                           color: StitchTheme.tertiaryFixed,

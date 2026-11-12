@@ -35,6 +35,8 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   int _activeTabIndex = 0;
   String _inDocOcrQuery = '';
 
+  String _tr(String vi, String en) => widget.appState.tr(vi, en);
+
   @override
   void initState() {
     super.initState();
@@ -410,7 +412,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // 2. Segmented Format Control (PDF | Ảnh JPG | Văn bản OCR)
+                      // 2. Segmented Format Control (PDF | Ảnh JPG | Văn bản OCR)
                     Container(
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
@@ -421,20 +423,21 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                         children: [
                           _buildFormatSegmentItem(
                             title: 'PDF',
-                            subtitle: 'A4 • Chuẩn',
+                            subtitle: _tr('A4 • Chuẩn', 'A4 • Standard'),
                             selected: selectedFormatIdx == 0,
                             onTap: () =>
                                 setSheetState(() => selectedFormatIdx = 0),
                           ),
                           _buildFormatSegmentItem(
-                            title: 'Ảnh JPG',
-                            subtitle: '${_doc.pageCount} ảnh',
+                            title: _tr('Ảnh JPG', 'JPG Images'),
+                            subtitle:
+                                '${_doc.pageCount} ${_tr('ảnh', 'images')}',
                             selected: selectedFormatIdx == 1,
                             onTap: () =>
                                 setSheetState(() => selectedFormatIdx = 1),
                           ),
                           _buildFormatSegmentItem(
-                            title: 'Văn bản OCR',
+                            title: _tr('Văn bản OCR', 'OCR Text'),
                             subtitle: 'File .TXT',
                             selected: selectedFormatIdx == 2,
                             onTap: () =>
@@ -520,9 +523,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                     const SizedBox(height: 16),
 
                     // 3. Dãy biểu tượng Chia sẻ nhanh 1 chạm (Zalo, Gmail, Tin nhắn, Drive, AirDrop)
-                    const Text(
-                      'CHIA SẺ NHANH 1 CHẠM',
-                      style: TextStyle(
+                    Text(
+                      _tr('CHIA SẺ NHANH 1 CHẠM', '1-TAP QUICK SHARE'),
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         letterSpacing: 0.8,
@@ -607,9 +610,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                           ),
                         ),
                         icon: const Icon(Icons.ios_share_rounded, size: 20),
-                        label: const Text(
-                          'Chia sẻ tệp ngay',
-                          style: TextStyle(
+                        label: Text(
+                          _tr('Chia sẻ tệp ngay', 'Share File Now'),
+                          style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1124,7 +1127,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        'Các trang (${_doc.pageCount})',
+                        '${_tr('Các trang', 'Pages')} (${_doc.pageCount})',
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: _activeTabIndex == 0
@@ -1173,7 +1176,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        'Văn bản AI OCR',
+                        _tr('Văn bản AI OCR', 'AI OCR Text'),
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: _activeTabIndex == 1
@@ -2391,9 +2394,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                   size: 18,
                   color: StitchTheme.primary,
                 ),
-                label: const Text(
-                  'Thêm ảnh',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                label: Text(
+                  _tr('Thêm ảnh', 'Add Photo'),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -2415,9 +2421,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                   size: 18,
                   color: StitchTheme.primary,
                 ),
-                label: const Text(
-                  'Quét thêm',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                label: Text(
+                  _tr('Quét thêm', 'Scan More'),
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -2435,9 +2444,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                   ),
                 ),
                 icon: const Icon(Icons.ios_share_rounded, size: 18),
-                label: const Text(
-                  'Xuất / Chia sẻ',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                label: Text(
+                  _tr('Xuất / Chia sẻ', 'Export / Share'),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),

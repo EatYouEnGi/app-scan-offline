@@ -1,9 +1,12 @@
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Quản lý khóa ứng dụng bằng sinh trắc học (Face ID, Touch ID, vân tay Android).
+/// Quản lý khóa ứng dụng bằng sinh trắc học (Face ID, Touch ID, vân tay Android)
+/// và cấu hình người dùng (ngôn ngữ VI/EN, trạng thái Onboarding).
 class SecurityService {
   static const String _prefBiometricLockKey = 'biometric_lock_enabled';
+  static const String _prefLanguageCodeKey = 'app_language_code';
+  static const String _prefOnboardingSeenKey = 'app_onboarding_completed';
   final LocalAuthentication _localAuth = LocalAuthentication();
 
   Future<bool> isBiometricLockEnabled() async {
@@ -14,6 +17,26 @@ class SecurityService {
   Future<void> setBiometricLockEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_prefBiometricLockKey, enabled);
+  }
+
+  Future<String> getLanguageCode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_prefLanguageCodeKey) ?? 'vi';
+  }
+
+  Future<void> setLanguageCode(String code) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefLanguageCodeKey, code);
+  }
+
+  Future<bool> hasCompletedOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_prefOnboardingSeenKey) ?? false;
+  }
+
+  Future<void> setCompletedOnboarding(bool completed) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefOnboardingSeenKey, completed);
   }
 
   Future<bool> canCheckBiometrics() async {
@@ -45,4 +68,3 @@ class SecurityService {
     }
   }
 }
-

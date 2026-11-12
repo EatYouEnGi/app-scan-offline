@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'screens/library_screen.dart';
+import 'screens/splash_screen.dart';
 import 'state/app_state.dart';
 import 'theme/stitch_theme.dart';
 
@@ -14,23 +14,30 @@ class AppScanApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Scan Tài Liệu AI',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('vi', 'VN'),
-      supportedLocales: const [
-        Locale('vi', 'VN'),
-        Locale('en', 'US'),
-      ],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      theme: StitchTheme.buildLightTheme(),
-      darkTheme: StitchTheme.buildDarkTheme(),
-      themeMode: ThemeMode.light,
-      home: LibraryScreen(appState: appState),
+    return ListenableBuilder(
+      listenable: appState,
+      builder: (context, _) {
+        return MaterialApp(
+          title: appState.isVi ? 'Scan Tài Liệu AI' : 'AI Document Scanner',
+          debugShowCheckedModeBanner: false,
+          locale: appState.isVi
+              ? const Locale('vi', 'VN')
+              : const Locale('en', 'US'),
+          supportedLocales: const [
+            Locale('vi', 'VN'),
+            Locale('en', 'US'),
+          ],
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          theme: StitchTheme.buildLightTheme(),
+          darkTheme: StitchTheme.buildDarkTheme(),
+          themeMode: ThemeMode.light,
+          home: SplashScreen(appState: appState),
+        );
+      },
     );
   }
 }

@@ -80,13 +80,35 @@ class VisionService {
     );
   }
 
+  /// Lấy kích thước (width, height) của ảnh sau khi đã chuẩn hóa hướng EXIF.
+  Future<({int width, int height})?> getOrientedImageDimensions(
+    String imagePath,
+  ) async {
+    final file = File(imagePath);
+    if (!await file.exists()) return null;
+    final bytes = await file.readAsBytes();
+    return compute(_decodeOrientedDimensionsIsolate, bytes);
+  }
+
+  static ({int width, int height})? _decodeOrientedDimensionsIsolate(
+    Uint8List bytes,
+  ) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return null;
+    final oriented = img.bakeOrientation(decoded);
+    return (width: oriented.width, height: oriented.height);
+  }
+
   /// Hàm chạy trên Isolate để nhận diện 4 góc tờ giấy từ dữ liệu ảnh.
+  /// Kết hợp:
+  /// 1) Phân tích ngưỡng Otsu + đạo hàm Sobel cho nền tương phản cao.
+  /// 2) Lan truyền vùng trung tâm (Central-Seeded Chromatic & Edge Barrier Flood-Fill)
+  ///    khi chụp giấy trên nền sáng (gạch men, bàn trắng, sàn nhà có nắng) để không bắt nhầm góc khung ảnh.
   static CropQuad detectDocumentCornersFromBytes(Uint8List bytes) {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return CropQuad.inset(0.06);
 
     final oriented = img.bakeOrientation(decoded);
-    // Thu nhỏ ảnh về cạnh dài ~240px để phân tích biên và độ sáng nhanh.
     final int analysisW;
     final int analysisH;
     if (oriented.width >= oriented.height) {
@@ -106,28 +128,35 @@ class VisionService {
       interpolation: img.Interpolation.average,
     );
 
-    // Tính histogram độ sáng và ngưỡng Otsu tách trang giấy sáng khỏi nền.
+    final totalPixels = analysisW * analysisH;
     final hist = List<int>.filled(256, 0);
-    final luma = Uint8List(analysisW * analysisH);
+    final luma = Uint8List(totalPixels);
+    final rChan = Uint8List(totalPixels);
+    final gChan = Uint8List(totalPixels);
+    final bChan = Uint8List(totalPixels);
 
     for (int y = 0; y < analysisH; y++) {
       for (int x = 0; x < analysisW; x++) {
         final p = small.getPixel(x, y);
-        final v = ((p.r.toInt() * 77 + p.g.toInt() * 150 + p.b.toInt() * 29) >> 8)
-            .clamp(0, 255)
-            .toInt();
-        luma[y * analysisW + x] = v;
+        final r = p.r.toInt().clamp(0, 255);
+        final g = p.g.toInt().clamp(0, 255);
+        final b = p.b.toInt().clamp(0, 255);
+        final idx = y * analysisW + x;
+        rChan[idx] = r;
+        gChan[idx] = g;
+        bChan[idx] = b;
+        final v = ((r * 77 + g * 150 + b * 29) >> 8).clamp(0, 255);
+        luma[idx] = v;
         hist[v]++;
       }
     }
 
-    final threshold = _computeOtsuThreshold(hist, analysisW * analysisH);
+    final threshold = _computeOtsuThreshold(hist, totalPixels);
 
-    // Tìm các điểm thuộc biên tờ giấy (vùng sáng hơn ngưỡng và có biến thiên biên).
     double minSum = double.infinity;
     double maxSum = -double.infinity;
-    double minDiff = double.infinity; // x - y nhỏ nhất -> bottomLeft
-    double maxDiff = -double.infinity; // x - y lớn nhất -> topRight
+    double minDiff = double.infinity;
+    double maxDiff = -double.infinity;
 
     NormalizedPoint? tl;
     NormalizedPoint? tr;
@@ -144,7 +173,6 @@ class VisionService {
         final val = luma[idx];
         if (val >= threshold) {
           fgCount++;
-          // Kiểm tra điểm biên: có ít nhất 1 lân cận tối hơn hoặc độ dốc Sobel cao.
           final gx = (luma[idx + 1] - luma[idx - 1]).abs();
           final gy = (luma[idx + analysisW] - luma[idx - analysisW]).abs();
           final isBorder = (gx + gy) > 18 ||
@@ -180,26 +208,296 @@ class VisionService {
       }
     }
 
-    final fgRatio = fgCount / (analysisW * analysisH);
+    final fgRatio = fgCount / totalPixels;
+
+    // Kiểm tra xem tứ giác Otsu có bị dính sát mép khung hình (do nền sàn nhà sáng màu) hay không.
+    int frameEdgeTouches = 0;
+    if (tl != null && tr != null && br != null && bl != null) {
+      for (final pt in [tl, tr, br, bl]) {
+        if (pt.x <= 0.035 ||
+            pt.x >= 0.965 ||
+            pt.y <= 0.035 ||
+            pt.y >= 0.965) {
+          frameEdgeTouches++;
+        }
+      }
+    }
+
+    // Nếu nền tối/tương phản tốt và không bị tràn ra sát 4 góc khung ảnh -> dùng kết quả Otsu
     if (tl != null &&
         tr != null &&
         br != null &&
         bl != null &&
         fgRatio > 0.08 &&
-        fgRatio < 0.98) {
+        fgRatio <= 0.74 &&
+        frameEdgeTouches < 2) {
       final candidate = CropQuad(
         topLeft: tl.clamp(),
         topRight: tr.clamp(),
         bottomRight: br.clamp(),
         bottomLeft: bl.clamp(),
       );
-      if (candidate.isValidQuad && candidate.normalizedArea >= 0.10) {
+      if (candidate.isValidQuad &&
+          candidate.normalizedArea >= 0.10 &&
+          candidate.normalizedArea <= 0.90) {
         return candidate;
       }
     }
 
-    // Nếu không tách được biên rõ ràng, trả về khung gợi ý để người dùng kéo 4 góc.
-    return CropQuad.inset(0.06);
+    // Giai đoạn 2: Chuyên trị nền sáng / gạch men / bàn sáng màu (như ảnh chụp thực tế).
+    // Dùng Flood-Fill từ tâm tài liệu kết hợp màu sắc giấy (Chromaticity) & rào cản cạnh Sobel.
+    final floodQuad = _detectCornersByCentralFloodFill(
+      analysisW: analysisW,
+      analysisH: analysisH,
+      rChan: rChan,
+      gChan: gChan,
+      bChan: bChan,
+      luma: luma,
+    );
+    if (floodQuad != null &&
+        floodQuad.isValidQuad &&
+        floodQuad.normalizedArea >= 0.12 &&
+        floodQuad.normalizedArea <= 0.92) {
+      return floodQuad;
+    }
+
+    if (tl != null && tr != null && br != null && bl != null) {
+      final fallbackCandidate = CropQuad(
+        topLeft: tl.clamp(),
+        topRight: tr.clamp(),
+        bottomRight: br.clamp(),
+        bottomLeft: bl.clamp(),
+      );
+      if (fallbackCandidate.isValidQuad &&
+          fallbackCandidate.normalizedArea >= 0.10 &&
+          fallbackCandidate.normalizedArea <= 0.92) {
+        return fallbackCandidate;
+      }
+    }
+
+    return CropQuad.inset(0.08);
+  }
+
+  /// Thuật toán tách tờ giấy khỏi nền sáng (sàn gạch, mặt bàn sáng) bằng cách:
+  /// 1) Làm mượt cục bộ 3x3 để khử nhiễu chữ in bên trong tờ giấy.
+  /// 2) Lấy mẫu màu nền giấy ở vùng tâm `[0.32..0.68] x [0.35..0.68]`.
+  /// 3) Lan truyền (BFS Flood-Fill) từ tâm ra tới rào cản cạnh ngang/dọc hoặc nơi đổi màu nền.
+  static CropQuad? _detectCornersByCentralFloodFill({
+    required int analysisW,
+    required int analysisH,
+    required Uint8List rChan,
+    required Uint8List gChan,
+    required Uint8List bChan,
+    required Uint8List luma,
+  }) {
+    final total = analysisW * analysisH;
+    // Làm mượt 5x5 bằng bộ lọc hộp nhanh (loại bỏ nét chữ mảnh để giữ màu nền giấy đồng nhất)
+    final smoothR = Uint8List(total);
+    final smoothG = Uint8List(total);
+    final smoothB = Uint8List(total);
+    final smoothL = Uint8List(total);
+
+    for (int y = 0; y < analysisH; y++) {
+      final y0 = math.max(0, y - 2);
+      final y1 = math.min(analysisH - 1, y + 2);
+      for (int x = 0; x < analysisW; x++) {
+        final x0 = math.max(0, x - 2);
+        final x1 = math.min(analysisW - 1, x + 2);
+        // Lấy pixel sáng thứ nhì (dilation nhẹ) trong lân cận để lấp chữ đen trên giấy
+        int maxL = 0;
+        int bestR = rChan[y * analysisW + x];
+        int bestG = gChan[y * analysisW + x];
+        int bestB = bChan[y * analysisW + x];
+        for (int yy = y0; yy <= y1; yy += 2) {
+          final rowOff = yy * analysisW;
+          for (int xx = x0; xx <= x1; xx += 2) {
+            final idx = rowOff + xx;
+            final lv = luma[idx];
+            if (lv > maxL) {
+              maxL = lv;
+              bestR = rChan[idx];
+              bestG = gChan[idx];
+              bestB = bChan[idx];
+            }
+          }
+        }
+        final outIdx = y * analysisW + x;
+        smoothR[outIdx] = bestR;
+        smoothG[outIdx] = bestG;
+        smoothB[outIdx] = bestB;
+        smoothL[outIdx] = maxL;
+      }
+    }
+
+    // Lấy mẫu màu giấy ở vùng trung tâm
+    final cx0 = (analysisW * 0.33).round();
+    final cx1 = (analysisW * 0.67).round();
+    final cy0 = (analysisH * 0.36).round();
+    final cy1 = (analysisH * 0.68).round();
+
+    double sumR = 0, sumG = 0, sumB = 0, sumL = 0;
+    int sampleCount = 0;
+    for (int y = cy0; y <= cy1; y++) {
+      for (int x = cx0; x <= cx1; x++) {
+        final idx = y * analysisW + x;
+        if (smoothL[idx] >= 90) {
+          sumR += smoothR[idx];
+          sumG += smoothG[idx];
+          sumB += smoothB[idx];
+          sumL += smoothL[idx];
+          sampleCount++;
+        }
+      }
+    }
+    if (sampleCount < 20) return null;
+
+    final meanR = sumR / sampleCount;
+    final meanG = sumG / sampleCount;
+    final meanB = sumB / sampleCount;
+    final meanL = sumL / sampleCount;
+    // Độ lệch màu sắc chuẩn hóa (R-B, G-B) giúp phân biệt giấy trắng/vàng kem với gạch sàn xanh/xám
+    final meanRG = meanR - meanG;
+    final meanRB = meanR - meanB;
+
+    // Tính bản đồ biên Sobel trên ảnh đã khử chữ (chỉ còn biên thật của mép giấy và đường gạch)
+    final edgeGrad = Uint8List(total);
+    for (int y = 1; y < analysisH - 1; y++) {
+      for (int x = 1; x < analysisW - 1; x++) {
+        final idx = y * analysisW + x;
+        final gxL = (smoothL[idx + 1] - smoothL[idx - 1]).abs();
+        final gyL = (smoothL[idx + analysisW] - smoothL[idx - analysisW]).abs();
+        final gxC = (smoothR[idx + 1] -
+                    smoothB[idx + 1] -
+                    (smoothR[idx - 1] - smoothB[idx - 1]))
+                .abs();
+        final gyC = (smoothR[idx + analysisW] -
+                    smoothB[idx + analysisW] -
+                    (smoothR[idx - analysisW] - smoothB[idx - analysisW]))
+                .abs();
+        edgeGrad[idx] = math.min(255, gxL + gyL + ((gxC + gyC) >> 1));
+      }
+    }
+
+    // Flood-fill từ tâm ra xung quanh
+    final visited = Uint8List(total);
+    final queue = Int32List(total);
+    int qHead = 0;
+    int qTail = 0;
+
+    final seedX = analysisW ~/ 2;
+    final seedY = (analysisH * 0.52).round();
+    for (int dy = -6; dy <= 6; dy += 3) {
+      for (int dx = -6; dx <= 6; dx += 3) {
+        final sx = (seedX + dx).clamp(2, analysisW - 3);
+        final sy = (seedY + dy).clamp(2, analysisH - 3);
+        final sIdx = sy * analysisW + sx;
+        if (visited[sIdx] == 0) {
+          visited[sIdx] = 1;
+          queue[qTail++] = sIdx;
+        }
+      }
+    }
+
+    while (qHead < qTail) {
+      final curr = queue[qHead++];
+      final cy = curr ~/ analysisW;
+      final cx = curr - cy * analysisW;
+
+      if (cx <= 2 ||
+          cx >= analysisW - 3 ||
+          cy <= 2 ||
+          cy >= analysisH - 3) {
+        continue;
+      }
+
+      final neighbors = [
+        curr - 1,
+        curr + 1,
+        curr - analysisW,
+        curr + analysisW,
+      ];
+
+      for (final nIdx in neighbors) {
+        if (visited[nIdx] != 0) continue;
+        if (edgeGrad[nIdx] > 34) continue;
+
+        final dr = (smoothR[nIdx] - meanR).abs();
+        final dg = (smoothG[nIdx] - meanG).abs();
+        final db = (smoothB[nIdx] - meanB).abs();
+        final dl = (smoothL[nIdx] - meanL).abs();
+
+        final rgDiff = ((smoothR[nIdx] - smoothG[nIdx]) - meanRG).abs();
+        final rbDiff = ((smoothR[nIdx] - smoothB[nIdx]) - meanRB).abs();
+
+        final colorScore =
+            (dr + dg + db) * 0.35 + dl * 0.45 + (rgDiff + rbDiff) * 0.95;
+        if (colorScore <= 42.0) {
+          visited[nIdx] = 1;
+          queue[qTail++] = nIdx;
+        }
+      }
+    }
+
+    if (qTail < total * 0.08) return null;
+
+    // Thu thập các điểm biên của vùng giấy vừa lan truyền
+    final borderPts = <NormalizedPoint>[];
+    for (int y = 2; y < analysisH - 2; y++) {
+      for (int x = 2; x < analysisW - 2; x++) {
+        final idx = y * analysisW + x;
+        if (visited[idx] == 1) {
+          if (visited[idx - 1] == 0 ||
+              visited[idx + 1] == 0 ||
+              visited[idx - analysisW] == 0 ||
+              visited[idx + analysisW] == 0) {
+            borderPts.add(
+              NormalizedPoint(x / (analysisW - 1), y / (analysisH - 1)),
+            );
+          }
+        }
+      }
+    }
+
+    if (borderPts.length < 24) return null;
+
+    // Tìm 4 đỉnh tứ giác từ tập điểm biên (kết hợp khoảng cách góc cực trị)
+    NormalizedPoint bestTL = borderPts.first;
+    NormalizedPoint bestTR = borderPts.first;
+    NormalizedPoint bestBR = borderPts.first;
+    NormalizedPoint bestBL = borderPts.first;
+
+    double minTL = double.infinity;
+    double maxTR = -double.infinity;
+    double maxBR = -double.infinity;
+    double minBL = double.infinity;
+
+    for (final pt in borderPts) {
+      final sum = pt.x + pt.y;
+      final diff = pt.x - pt.y;
+      if (sum < minTL) {
+        minTL = sum;
+        bestTL = pt;
+      }
+      if (sum > maxBR) {
+        maxBR = sum;
+        bestBR = pt;
+      }
+      if (diff > maxTR) {
+        maxTR = diff;
+        bestTR = pt;
+      }
+      if (diff < minBL) {
+        minBL = diff;
+        bestBL = pt;
+      }
+    }
+
+    return CropQuad(
+      topLeft: bestTL.clamp(),
+      topRight: bestTR.clamp(),
+      bottomRight: bestBR.clamp(),
+      bottomLeft: bestBL.clamp(),
+    );
   }
 
   static int _computeOtsuThreshold(List<int> hist, int totalPixels) {

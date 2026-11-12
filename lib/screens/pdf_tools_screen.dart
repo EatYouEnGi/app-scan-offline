@@ -3,17 +3,17 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/scan_models.dart';
-import '../services/benchmark_service.dart';
 import '../state/app_state.dart';
 import '../theme/stitch_theme.dart';
 import 'document_detail_screen.dart';
 
 /// Màn hình Công Cụ PDF & Khóa Sinh Trắc Học (Stitch Screen 7):
-/// - Thẻ Bảo Mật Sinh Trắc Học (Face ID / Vân tay, Mã hóa AES-256 On-Device).
+/// - Thẻ Bảo Mật Sinh Trắc Học (Face ID / Vân tay, Lưu trữ cục bộ On-Device).
 /// - Card 1: Nhập tệp PDF có sẵn từ thiết bị.
-/// - Card 2: Gộp nhiều tài liệu (Merge PDF) trực quan ngay trên thẻ hoặc hộp thoại.
-/// - Card 3: Tách trang tài liệu (Split PDF) theo khoảng trang (VD: 1-2, 4) hoặc chọn trang.
-/// - Nén PDF & Kiểm chuẩn tự động 30 mẫu nghiệm thu.
+/// - Card 2: Gộp nhiều tài liệu (Merge PDF) trực quan ngay trên thẻ.
+/// - Card 3: Tách trang tài liệu (Split PDF) theo khoảng trang (VD: 1-2, 4).
+/// - Card 4: Nén dung lượng & Chọn khổ giấy PDF (A4 / Letter / Hóa đơn).
+/// - Hỗ trợ song ngữ Tiếng Việt & Tiếng Anh.
 class PdfToolsScreen extends StatefulWidget {
   final AppState appState;
 
@@ -32,8 +32,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
       TextEditingController(text: '1-2');
   String? _selectedSplitDocId;
 
-  BenchmarkSummaryReport? _benchmarkReport;
-  bool _runningBenchmark = false;
+  String _tr(String vi, String en) => widget.appState.tr(vi, en);
 
   @override
   void initState() {
@@ -76,7 +75,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
 
       final importedDoc = await widget.appState.importExistingPdf(
         pdfPath: filePath,
-        customTitle: baseTitle.isEmpty ? 'PDF Nhập' : baseTitle,
+        customTitle: baseTitle.isEmpty
+            ? _tr('PDF Nhập', 'Imported PDF')
+            : baseTitle,
       );
 
       if (!mounted) return;
@@ -93,7 +94,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Colors.red.shade700,
-          content: Text('Không thể nhập PDF: $e'),
+          content: Text('${_tr('Không thể nhập PDF', 'Cannot import PDF')}: $e'),
         ),
       );
     }
@@ -106,9 +107,13 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
 
     if (chosenDocs.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Vui lòng tích chọn ít nhất 2 tài liệu để Gộp PDF.'),
+        SnackBar(
+          content: Text(
+            _tr(
+              'Vui lòng tích chọn ít nhất 2 tài liệu để Gộp PDF.',
+              'Please select at least 2 documents to Merge PDF.',
+            ),
+          ),
         ),
       );
       return;
@@ -116,8 +121,10 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
 
     final merged = await widget.appState.mergeDocuments(
       sourceDocuments: chosenDocs,
-      mergedTitle:
-          'Hồ sơ gộp (${DateTime.now().day}/${DateTime.now().month})',
+      mergedTitle: _tr(
+        'Hồ sơ gộp (${DateTime.now().day}/${DateTime.now().month})',
+        'Merged Document (${DateTime.now().day}/${DateTime.now().month})',
+      ),
     );
 
     if (!mounted) return;
@@ -167,9 +174,12 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
   Future<void> _executeInlineSplit(ScanDocument sourceDoc) async {
     if (sourceDoc.pageCount < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Tài liệu cần có từ 2 trang trở lên để thực hiện Tách trang.',
+            _tr(
+              'Tài liệu cần có từ 2 trang trở lên để thực hiện Tách trang.',
+              'Document must have at least 2 pages to Split PDF.',
+            ),
           ),
         ),
       );
@@ -181,7 +191,8 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
     final splitDoc = await widget.appState.splitDocument(
       sourceDocument: sourceDoc,
       selectedPageIndexes: indexes,
-      newTitle: '${sourceDoc.title} (Bản tách)',
+      newTitle:
+          '${sourceDoc.title} (${_tr('Bản tách', 'Split')})',
     );
 
     if (!mounted) return;
@@ -199,7 +210,14 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
     final docs = widget.appState.documents;
     if (docs.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chưa có tài liệu nào trong thư viện.')),
+        SnackBar(
+          content: Text(
+            _tr(
+              'Chưa có tài liệu nào trong thư viện.',
+              'No documents in the library yet.',
+            ),
+          ),
+        ),
       );
       return;
     }
@@ -214,15 +232,17 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              title: const Text('Nén PDF & Chọn khổ giấy'),
+              title: Text(
+                _tr('Nén PDF & Chọn khổ giấy', 'Compress PDF & Paper Size'),
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<ScanDocument>(
                     value: selectedDoc,
-                    decoration: const InputDecoration(
-                      labelText: 'Tài liệu',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: _tr('Tài liệu', 'Document'),
+                      border: const OutlineInputBorder(),
                     ),
                     items: docs
                         .map(
@@ -239,9 +259,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<PaperSizePreset>(
                     value: paper,
-                    decoration: const InputDecoration(
-                      labelText: 'Khổ giấy',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: _tr('Khổ giấy', 'Paper Size'),
+                      border: const OutlineInputBorder(),
                     ),
                     items: PaperSizePreset.values
                         .map(
@@ -258,9 +278,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<PdfQualityPreset>(
                     value: quality,
-                    decoration: const InputDecoration(
-                      labelText: 'Mức nén dung lượng',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: _tr('Mức nén dung lượng', 'Compression Level'),
+                      border: const OutlineInputBorder(),
                     ),
                     items: PdfQualityPreset.values
                         .map(
@@ -279,12 +299,14 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(false),
-                  child: const Text('Hủy'),
+                  child: Text(_tr('Hủy', 'Cancel')),
                 ),
                 FilledButton.icon(
                   onPressed: () => Navigator.of(ctx).pop(true),
                   icon: const Icon(Icons.compress),
-                  label: const Text('Tạo & Chia sẻ PDF nén'),
+                  label: Text(
+                    _tr('Tạo & Chia sẻ PDF nén', 'Export & Share Compressed PDF'),
+                  ),
                 ),
               ],
             );
@@ -302,140 +324,131 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
     );
   }
 
-  Future<void> _runBenchmark() async {
-    setState(() => _runningBenchmark = true);
-    try {
-      final report =
-          await widget.appState.benchmarkService.run30SampleBenchmark();
-      if (!mounted) return;
-      setState(() => _benchmarkReport = report);
-    } finally {
-      if (mounted) setState(() => _runningBenchmark = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final allDocs = widget.appState.documents;
-    final selectedMergeDocs =
-        allDocs.where((d) => _selectedMergeDocIds.contains(d.id)).toList();
-    final totalMergePages =
-        selectedMergeDocs.fold<int>(0, (sum, d) => sum + d.pageCount);
+    return ListenableBuilder(
+      listenable: widget.appState,
+      builder: (context, _) {
+        final allDocs = widget.appState.documents;
+        final selectedMergeDocs =
+            allDocs.where((d) => _selectedMergeDocIds.contains(d.id)).toList();
+        final totalMergePages =
+            selectedMergeDocs.fold<int>(0, (sum, d) => sum + d.pageCount);
 
-    ScanDocument? splitSourceDoc;
-    if (allDocs.isNotEmpty) {
-      splitSourceDoc = allDocs.firstWhere(
-        (d) => d.id == _selectedSplitDocId,
-        orElse: () => allDocs.first,
-      );
-    }
+        ScanDocument? splitSourceDoc;
+        if (allDocs.isNotEmpty) {
+          splitSourceDoc = allDocs.firstWhere(
+            (d) => d.id == _selectedSplitDocId,
+            orElse: () => allDocs.first,
+          );
+        }
 
-    return Scaffold(
-      backgroundColor: StitchTheme.surface,
-      body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopAppBar(),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
-                children: [
-                  // 1. Biometric Security Hero Banner (Stitch Screen 7)
-                  _buildBiometricHeroBanner(),
-                  const SizedBox(height: 18),
-
-                  // 2. Section Header
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        return Scaffold(
+          backgroundColor: StitchTheme.surface,
+          body: SafeArea(
+            child: Column(
+              children: [
+                _buildTopAppBar(),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 28),
                     children: [
-                      const Text(
-                        'TIỆN ÍCH XỬ LÝ TỆP PDF',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.8,
-                          color: StitchTheme.textSubtle,
-                        ),
-                      ),
-                      Text(
-                        '4 công cụ sẵn sàng',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: StitchTheme.primary.withValues(alpha: 0.85),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
+                      // 1. Biometric Security Hero Banner (Stitch Screen 7)
+                      _buildBiometricHeroBanner(),
+                      const SizedBox(height: 18),
 
-                  // 3. Card 1: Nhập tệp PDF có sẵn từ thiết bị
-                  _buildImportPdfCard(),
-                  const SizedBox(height: 14),
-
-                  // 4. Card 2: Gộp nhiều tài liệu (Merge PDF)
-                  _buildMergePdfCard(
-                    allDocs: allDocs,
-                    selectedCount: selectedMergeDocs.length,
-                    totalMergePages: totalMergePages,
-                  ),
-                  const SizedBox(height: 14),
-
-                  // 5. Card 3: Tách trang tài liệu (Split PDF)
-                  _buildSplitPdfCard(
-                    allDocs: allDocs,
-                    splitSourceDoc: splitSourceDoc,
-                  ),
-                  const SizedBox(height: 14),
-
-                  // 6. Card 4: Nén dung lượng & Kiểm chuẩn 30 mẫu
-                  _buildCompressAndBenchmarkCard(),
-
-                  if (_benchmarkReport != null) ...[
-                    const SizedBox(height: 12),
-                    _buildBenchmarkSummaryCard(_benchmarkReport!),
-                  ],
-
-                  const SizedBox(height: 18),
-                  // 7. Bottom Trust Badge
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 7,
-                      ),
-                      decoration: BoxDecoration(
-                        color: StitchTheme.surfaceContainerLow,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(color: StitchTheme.borderLight),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
+                      // 2. Section Header
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Icon(
-                            Icons.offline_bolt_rounded,
-                            size: 15,
-                            color: StitchTheme.primaryContainer,
-                          ),
-                          SizedBox(width: 6),
                           Text(
-                            '100% Offline Engine • Không tải tài liệu lên đám mây',
+                            _tr('TIỆN ÍCH XỬ LÝ TỆP PDF', 'OFFLINE PDF UTILITIES'),
+                            style: const TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                              color: StitchTheme.textSubtle,
+                            ),
+                          ),
+                          Text(
+                            _tr('4 công cụ sẵn sàng', '4 tools ready'),
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: StitchTheme.textSubtle,
+                              color: StitchTheme.primary.withValues(alpha: 0.85),
                             ),
                           ),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 10),
+
+                      // 3. Card 1: Nhập tệp PDF có sẵn từ thiết bị
+                      _buildImportPdfCard(),
+                      const SizedBox(height: 14),
+
+                      // 4. Card 2: Gộp nhiều tài liệu (Merge PDF)
+                      _buildMergePdfCard(
+                        allDocs: allDocs,
+                        selectedCount: selectedMergeDocs.length,
+                        totalMergePages: totalMergePages,
+                      ),
+                      const SizedBox(height: 14),
+
+                      // 5. Card 3: Tách trang tài liệu (Split PDF)
+                      _buildSplitPdfCard(
+                        allDocs: allDocs,
+                        splitSourceDoc: splitSourceDoc,
+                      ),
+                      const SizedBox(height: 14),
+
+                      // 6. Card 4: Nén dung lượng & Khổ giấy PDF
+                      _buildCompressPdfCard(),
+
+                      const SizedBox(height: 18),
+                      // 7. Bottom Trust Badge
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: StitchTheme.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: StitchTheme.borderLight),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.offline_bolt_rounded,
+                                size: 15,
+                                color: StitchTheme.primaryContainer,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                _tr(
+                                  '100% Offline Engine • Không tải tài liệu lên đám mây',
+                                  '100% Offline Engine • Zero Cloud Uploads',
+                                ),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: StitchTheme.textSubtle,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -468,30 +481,33 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
             ),
           ),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Công Cụ PDF & Bảo Mật',
-                  style: TextStyle(
+                  _tr('Công Cụ PDF & Bảo Mật', 'PDF Tools & Security'),
+                  style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
                     color: StitchTheme.textMain,
                   ),
                 ),
-                SizedBox(height: 1),
+                const SizedBox(height: 1),
                 Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.lock_rounded,
                       size: 12,
                       color: StitchTheme.primaryContainer,
                     ),
-                    SizedBox(width: 4),
+                    const SizedBox(width: 4),
                     Text(
-                      'Xử lý ngoại tuyến 100% on-device',
-                      style: TextStyle(
+                      _tr(
+                        'Xử lý ngoại tuyến 100% on-device',
+                        '100% On-Device Offline Processing',
+                      ),
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: StitchTheme.primaryContainer,
@@ -502,17 +518,23 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               ],
             ),
           ),
-          Container(
-            width: 38,
-            height: 38,
-            decoration: const BoxDecoration(
-              color: StitchTheme.primaryContainerLight,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.verified_user_rounded,
-              color: StitchTheme.primary,
-              size: 20,
+          InkWell(
+            onTap: () => widget.appState.toggleLanguage(),
+            borderRadius: BorderRadius.circular(999),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: StitchTheme.primaryContainerLight,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                widget.appState.isVi ? '🇻🇳 VI' : '🇬🇧 EN',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: StitchTheme.primary,
+                ),
+              ),
             ),
           ),
         ],
@@ -588,10 +610,10 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   children: [
                     Row(
                       children: [
-                        const Flexible(
+                        Flexible(
                           child: Text(
-                            'Kho Tài Liệu An Toàn',
-                            style: TextStyle(
+                            _tr('Kho Tài Liệu An Toàn', 'Biometric Document Vault'),
+                            style: const TextStyle(
                               fontSize: 14.5,
                               fontWeight: FontWeight.w700,
                               color: StitchTheme.textMain,
@@ -611,7 +633,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
-                            enabled ? 'Đang bật' : 'Đang tắt',
+                            enabled
+                                ? _tr('Đang bật', 'Active')
+                                : _tr('Đang tắt', 'Off'),
                             style: TextStyle(
                               fontSize: 9.5,
                               fontWeight: FontWeight.w700,
@@ -624,9 +648,12 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                       ],
                     ),
                     const SizedBox(height: 3),
-                    const Text(
-                      'Yêu cầu xác thực sinh trắc học khi mở ứng dụng hoặc chia sẻ hồ sơ quan trọng.',
-                      style: TextStyle(
+                    Text(
+                      _tr(
+                        'Yêu cầu xác thực sinh trắc học khi mở ứng dụng hoặc chia sẻ hồ sơ quan trọng.',
+                        'Require Face ID / Fingerprint authentication when opening the app.',
+                      ),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         height: 1.35,
                         color: StitchTheme.textSubtle,
@@ -660,7 +687,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   ),
                   const SizedBox(width: 5),
                   Text(
-                    'Face ID / Vân tay: ${enabled ? 'BẬT' : 'TẮT'}',
+                    '${_tr('Face ID / Vân tay', 'Face ID / Touch ID')}: ${enabled ? _tr('BẬT', 'ON') : _tr('TẮT', 'OFF')}',
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
@@ -676,18 +703,18 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   color: Colors.white.withValues(alpha: 0.8),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Row(
+                child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.enhanced_encryption_rounded,
                       size: 13,
                       color: StitchTheme.textSubtle,
                     ),
-                    SizedBox(width: 4),
+                    const SizedBox(width: 4),
                     Text(
-                      'Lưu trữ cục bộ On-Device',
-                      style: TextStyle(
+                      _tr('Lưu trữ cục bộ On-Device', 'On-Device Storage'),
+                      style: const TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w600,
                         color: StitchTheme.textSubtle,
@@ -737,22 +764,28 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Nhập tệp PDF có sẵn từ thiết bị',
-                      style: TextStyle(
+                      _tr(
+                        'Nhập tệp PDF có sẵn từ thiết bị',
+                        'Import Existing PDF from Device',
+                      ),
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: StitchTheme.textMain,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
-                      'Chuyển đổi tệp PDF trong máy thành các trang để ký tên, đóng dấu hoặc chạy AI OCR tiếng Việt.',
-                      style: TextStyle(
+                      _tr(
+                        'Chuyển đổi tệp PDF trong máy thành các trang để ký tên, đóng dấu hoặc chạy AI OCR tiếng Việt.',
+                        'Convert existing PDF files into editable pages for signing, stamping, or AI OCR.',
+                      ),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         color: StitchTheme.textSubtle,
                       ),
@@ -784,10 +817,13 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                     size: 20,
                   ),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
-                      'Chạm để chọn file .PDF trên thiết bị',
-                      style: TextStyle(
+                      _tr(
+                        'Chạm để chọn file .PDF trên thiết bị',
+                        'Tap to choose a .PDF file on device',
+                      ),
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: StitchTheme.textSubtle,
@@ -803,9 +839,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                       color: StitchTheme.primary,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
-                      'Duyệt tệp trên máy',
-                      style: TextStyle(
+                    child: Text(
+                      _tr('Duyệt tệp trên máy', 'Browse Files'),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w700,
                         color: Colors.white,
@@ -859,22 +895,28 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Gộp nhiều tài liệu (Merge PDF)',
-                      style: TextStyle(
+                      _tr(
+                        'Gộp nhiều tài liệu (Merge PDF)',
+                        'Merge Multiple Documents (Merge PDF)',
+                      ),
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: StitchTheme.textMain,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
-                      'Chọn các tài liệu trong thư viện để nối thành một tệp PDF duy nhất.',
-                      style: TextStyle(
+                      _tr(
+                        'Chọn các tài liệu trong thư viện để nối thành một tệp PDF duy nhất.',
+                        'Select documents in your library to combine into a single PDF.',
+                      ),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         color: StitchTheme.textSubtle,
                       ),
@@ -896,8 +938,8 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                   },
                   child: Text(
                     _selectedMergeDocIds.length == allDocs.length
-                        ? 'Bỏ chọn'
-                        : 'Chọn tất cả',
+                        ? _tr('Bỏ chọn', 'Deselect')
+                        : _tr('Chọn tất cả', 'Select all'),
                     style: const TextStyle(
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
@@ -908,11 +950,17 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
           ),
           const SizedBox(height: 10),
           if (allDocs.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                'Chưa có tài liệu nào trong thư viện.',
-                style: TextStyle(fontSize: 12, color: StitchTheme.textSubtle),
+                _tr(
+                  'Chưa có tài liệu nào trong thư viện.',
+                  'No documents in library yet.',
+                ),
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: StitchTheme.textSubtle,
+                ),
               ),
             )
           else
@@ -979,7 +1027,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                               ),
                             ),
                             Text(
-                              '${doc.pageCount} trang • ${doc.folder}',
+                              '${doc.pageCount} ${_tr('trang', 'pages')} • ${doc.folder}',
                               style: const TextStyle(
                                 fontSize: 10.5,
                                 color: StitchTheme.textSubtle,
@@ -1008,7 +1056,10 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               ),
               icon: const Icon(Icons.merge_type_rounded, size: 18),
               label: Text(
-                'Gộp $selectedCount tệp đã chọn ($totalMergePages trang)',
+                _tr(
+                  'Gộp $selectedCount tệp đã chọn ($totalMergePages trang)',
+                  'Merge $selectedCount selected ($totalMergePages pages)',
+                ),
                 style: const TextStyle(
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
@@ -1058,22 +1109,28 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Tách trang tài liệu (Split PDF)',
-                      style: TextStyle(
+                      _tr(
+                        'Tách trang tài liệu (Split PDF)',
+                        'Split Document Pages (Split PDF)',
+                      ),
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: StitchTheme.textMain,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
-                      'Trích xuất trang lẻ hoặc khoảng trang từ tệp PDF nhiều trang.',
-                      style: TextStyle(
+                      _tr(
+                        'Trích xuất trang lẻ hoặc khoảng trang từ tệp PDF nhiều trang.',
+                        'Extract specific pages or page ranges into a new document.',
+                      ),
+                      style: const TextStyle(
                         fontSize: 11.5,
                         color: StitchTheme.textSubtle,
                       ),
@@ -1089,7 +1146,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               value: splitSourceDoc.id,
               isDense: true,
               decoration: InputDecoration(
-                labelText: 'Tài liệu gốc',
+                labelText: _tr('Tài liệu gốc', 'Source Document'),
                 filled: true,
                 fillColor: StitchTheme.surfaceContainerLow,
                 border: OutlineInputBorder(
@@ -1102,7 +1159,7 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                     (d) => DropdownMenuItem(
                       value: d.id,
                       child: Text(
-                        '${d.title} (${d.pageCount} trang)',
+                        '${d.title} (${d.pageCount} ${_tr('trang', 'pages')})',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 12.5,
@@ -1135,9 +1192,12 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'KHOẢNG TRANG CẦN TÁCH (VD: 1-2, 4)',
-                          style: TextStyle(
+                        Text(
+                          _tr(
+                            'KHOẢNG TRANG CẦN TÁCH (VD: 1-2, 4)',
+                            'PAGE RANGE TO EXTRACT (E.G. 1-2, 4)',
+                          ),
+                          style: const TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w700,
                             color: StitchTheme.textSubtle,
@@ -1175,9 +1235,9 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
                     ),
                   ),
                   icon: const Icon(Icons.call_split_rounded, size: 18),
-                  label: const Text(
-                    'Tách ngay',
-                    style: TextStyle(
+                  label: Text(
+                    _tr('Tách ngay', 'Split Now'),
+                    style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1186,125 +1246,108 @@ class _PdfToolsScreenState extends State<PdfToolsScreen> {
               ],
             ),
           ] else
-            const Text(
-              'Chưa có tài liệu nào để tách trang.',
-              style: TextStyle(fontSize: 12, color: StitchTheme.textSubtle),
+            Text(
+              _tr(
+                'Chưa có tài liệu nào để tách trang.',
+                'No documents available to split.',
+              ),
+              style: const TextStyle(
+                fontSize: 12,
+                color: StitchTheme.textSubtle,
+              ),
             ),
         ],
       ),
     );
   }
 
-  Widget _buildCompressAndBenchmarkCard() {
+  Widget _buildCompressPdfCard() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: StitchTheme.borderLight),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _showCompressExportDialog,
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 11),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                  ),
-                  icon: const Icon(Icons.compress_rounded, size: 18),
-                  label: const Text(
-                    'Nén PDF & Khổ giấy',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.tonalIcon(
-                  onPressed: _runningBenchmark ? null : _runBenchmark,
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 11),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                  ),
-                  icon: _runningBenchmark
-                      ? const SizedBox(
-                          width: 15,
-                          height: 15,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.fact_check_outlined, size: 18),
-                  label: const Text(
-                    'Kiểm chuẩn 30 mẫu',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF191C1F).withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildBenchmarkSummaryCard(BenchmarkSummaryReport report) {
-    return Container(
-      padding: const EdgeInsets.all(14.0),
-      decoration: BoxDecoration(
-        color: StitchTheme.primaryContainerLight.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: StitchTheme.primary.withValues(alpha: 0.25),
-        ),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                report.passedEdgeCriterion && report.passedOcrCriterion
-                    ? Icons.verified_rounded
-                    : Icons.warning_amber_rounded,
-                color: StitchTheme.primary,
-                size: 20,
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: StitchTheme.primaryContainerLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.compress_rounded,
+                  color: StitchTheme.primary,
+                  size: 22,
+                ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                'Kết quả kiểm định: ${report.passedEdgeSamples}/${report.totalSamples} mẫu đạt chuẩn',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13.5,
-                  color: StitchTheme.textMain,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _tr(
+                        'Nén PDF & Định dạng Khổ giấy',
+                        'Compress PDF & Paper Size Preset',
+                      ),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: StitchTheme.textMain,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _tr(
+                        'Giảm dung lượng tệp PDF (A4, Letter, Hóa đơn) để gửi nhanh qua Zalo, Email.',
+                        'Optimize PDF size and paper format (A4, Letter, Receipt) for fast sharing.',
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: StitchTheme.textSubtle,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            '• Độ chính xác góc trung bình: ${(report.averageEdgeSimilarity * 100).toStringAsFixed(1)}% (Mục tiêu: >= 27/30 mẫu)',
-            style: const TextStyle(fontSize: 12),
-          ),
-          Text(
-            '• Tỷ lệ lỗi ký tự (CER) Tiếng Việt: ${(report.vietnameseCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
-            style: const TextStyle(fontSize: 12),
-          ),
-          Text(
-            '• Tỷ lệ lỗi ký tự (CER) Tiếng Anh: ${(report.englishCer * 100).toStringAsFixed(2)}% (Mục tiêu <= 5.0%)',
-            style: const TextStyle(fontSize: 12),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _showCompressExportDialog,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: StitchTheme.primary,
+                side: const BorderSide(color: StitchTheme.primary),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11),
+                ),
+              ),
+              icon: const Icon(Icons.compress_rounded, size: 18),
+              label: Text(
+                _tr('Nén PDF & Chọn khổ giấy', 'Compress PDF & Select Paper Size'),
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           ),
         ],
       ),
