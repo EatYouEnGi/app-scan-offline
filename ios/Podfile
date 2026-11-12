@@ -30,9 +30,7 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # Đóng gói mô hình Latin của Google ML Kit Text Recognition v2 (hỗ trợ Tiếng Việt & Tiếng Anh ngoại tuyến)
-  pod 'GoogleMLKit/TextRecognition', '~> 6.0.0'
-
+  # Plugin google_mlkit_text_recognition tự động đóng gói GoogleMLKit/TextRecognition (Latin model)
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 

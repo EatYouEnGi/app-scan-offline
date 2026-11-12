@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Tự động đẩy mã nguồn lên GitHub, kích hoạt GitHub Actions build cả Android (.apk) và iOS (.ipa),
     theo dõi tiến trình và tải cả 2 gói cài đặt về thư mục .\dist trên máy tính.
@@ -74,3 +74,4 @@ if ($runId) {
     gh run download $runId --dir $distDir
     Write-Host "Hoàn tất! File cài đặt nằm tại: $distDir" -ForegroundColor Green
 }
+

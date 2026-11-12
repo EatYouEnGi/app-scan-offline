@@ -22,7 +22,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace "com.appscan.offline"
-    compileSdk 34
+    compileSdk 35
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
