@@ -67,7 +67,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
                   child: Row(
                     children: [
-                      // Language Toggle Pill (VI / EN)
+                      // Brand Emblem + Language Toggle Pill (VI / EN)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(9),
+                        child: Image.asset(
+                          'assets/branding/scand_icon_rounded.png',
+                          width: 32,
+                          height: 32,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'ScanD',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: StitchTheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
                       Container(
                         padding: const EdgeInsets.all(3),
                         decoration: BoxDecoration(
@@ -528,3 +547,4 @@ class _OnboardingSlideData {
     required this.features,
   });
 }
+

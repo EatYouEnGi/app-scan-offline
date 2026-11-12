@@ -1,4 +1,4 @@
-name: Build Android APK & iOS IPA (App Scan Offline)
+name: Build ScanD Android APK & iOS IPA (Offline AI Scanner)
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Bootstrap complete Android project & apply custom native configuration
+      - name: Bootstrap complete Android project & apply ScanD branding + native configuration
         run: |
           cp -r android /tmp/custom_android
           rm -rf android ios
@@ -43,8 +43,10 @@ jobs:
           mkdir -p android/app/src/main/kotlin/com/appscan/offline
           cp /tmp/custom_android/app/src/main/kotlin/com/appscan/offline/MainActivity.kt android/app/src/main/kotlin/com/appscan/offline/MainActivity.kt
           flutter pub get
+          dart run flutter_launcher_icons
+          dart run flutter_native_splash:create
 
-      - name: Run Acceptance & 30-Sample Benchmark Tests
+      - name: Run Acceptance & Benchmark Tests
         run: |
           sudo apt-get update && sudo apt-get install -y libsqlite3-dev
           flutter test test/scanner_acceptance_test.dart
@@ -57,7 +59,7 @@ jobs:
             -alias appscan_key \
             -storepass appscan2026 \
             -keypass appscan2026 \
-            -dname "CN=App Scan Personal, OU=Mobile, O=Personal, L=Hanoi, S=HN, C=VN"
+            -dname "CN=ScanD Personal, OU=Mobile, O=Personal, L=Hanoi, S=HN, C=VN"
           printf "storePassword=appscan2026\nkeyPassword=appscan2026\nkeyAlias=appscan_key\nstoreFile=release-key.jks\n" > android/key.properties
 
       - name: Build Release APK
@@ -86,16 +88,18 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Bootstrap complete iOS Xcode project & apply custom Podfile/Info.plist/Swift Vision bridge
+      - name: Bootstrap complete iOS Xcode project & apply ScanD branding + Swift Vision bridge
         run: |
           flutter config --no-enable-swift-package-manager
           cp -r ios /tmp/custom_ios
           rm -rf android ios
-          flutter create . --platforms=ios --org com.appscan.offline --project-name app_scan
+          flutter create . --platforms=android,ios --org com.appscan.offline --project-name app_scan
           cp /tmp/custom_ios/Podfile ios/Podfile
           cp /tmp/custom_ios/Runner/Info.plist ios/Runner/Info.plist
           cp /tmp/custom_ios/Runner/AppDelegate.swift ios/Runner/AppDelegate.swift
           flutter pub get
+          dart run flutter_launcher_icons
+          dart run flutter_native_splash:create
 
       - name: Install CocoaPods (GoogleMLKit/TextRecognition Offline Latin Model)
         working-directory: ios

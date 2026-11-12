@@ -18,7 +18,7 @@ class AppScanApp extends StatelessWidget {
       listenable: appState,
       builder: (context, _) {
         return MaterialApp(
-          title: appState.isVi ? 'Scan Tài Liệu AI' : 'AI Document Scanner',
+          title: 'ScanD',
           debugShowCheckedModeBanner: false,
           locale: appState.isVi
               ? const Locale('vi', 'VN')

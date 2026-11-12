@@ -14,3 +14,4 @@ class AppStrings {
   static AppStrings of(BuildContext context, String langCode) =>
       AppStrings(langCode);
 }
+

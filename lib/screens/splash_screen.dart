@@ -75,9 +75,9 @@ class _SplashScreenState extends State<SplashScreen>
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             colors: [
-              Color(0xFF003B33),
-              Color(0xFF004F45),
-              Color(0xFF101316),
+              Color(0xFF0A1229),
+              Color(0xFF0F1B3D),
+              Color(0xFF0B2B3C),
             ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -88,10 +88,10 @@ class _SplashScreenState extends State<SplashScreen>
             children: [
               const Spacer(flex: 3),
 
-              // Animated AI Document Scanner Emblem
+              // Official ScanD-V2 Brand Icon with Animated AI Laser Sweep
               SizedBox(
-                width: 124,
-                height: 124,
+                width: 148,
+                height: 148,
                 child: AnimatedBuilder(
                   animation: _laserCtrl,
                   builder: (context, _) {
@@ -101,63 +101,56 @@ class _SplashScreenState extends State<SplashScreen>
                       children: [
                         // Outer glowing halo
                         Container(
-                          width: 124,
-                          height: 124,
+                          width: 148,
+                          height: 148,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: const Color(0xFF00DAF3)
-                                .withValues(alpha: 0.08 + 0.06 * t),
+                            color: const Color(0xFF14B8A6)
+                                .withValues(alpha: 0.10 + 0.08 * t),
                             border: Border.all(
-                              color: const Color(0xFF9CF0FF)
+                              color: const Color(0xFF5EEAD4)
                                   .withValues(alpha: 0.35),
                               width: 1.5,
                             ),
                           ),
                         ),
-                        // Core rounded scanner badge
+                        // Official ScanD-V2 Icon (`assets/branding/scand_icon_rounded.png`)
                         Container(
-                          width: 92,
-                          height: 92,
+                          width: 112,
+                          height: 112,
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [Color(0xFF00695C), Color(0xFF004F45)],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            borderRadius: BorderRadius.circular(26),
-                            border: Border.all(
-                              color: const Color(0xFF5FFBD6),
-                              width: 2,
-                            ),
+                            borderRadius: BorderRadius.circular(28),
                             boxShadow: [
                               BoxShadow(
-                                color: const Color(0xFF00DAF3)
-                                    .withValues(alpha: 0.35),
-                                blurRadius: 22,
+                                color: const Color(0xFF14B8A6)
+                                    .withValues(alpha: 0.38),
+                                blurRadius: 26,
                                 spreadRadius: 2,
                               ),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.document_scanner_rounded,
-                            size: 46,
-                            color: Colors.white,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: Image.asset(
+                              'assets/branding/scand_icon_rounded.png',
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
                         // Sweeping AI Laser Bar
                         Positioned(
-                          top: 22 + t * 76,
+                          top: 24 + t * 92,
                           child: Container(
-                            width: 78,
+                            width: 96,
                             height: 3,
                             decoration: BoxDecoration(
-                              color: const Color(0xFF5FFBD6),
+                              color: const Color(0xFF5EEAD4),
                               borderRadius: BorderRadius.circular(999),
                               boxShadow: const [
                                 BoxShadow(
-                                  color: Color(0xFF00DAF3),
-                                  blurRadius: 8,
-                                  spreadRadius: 1,
+                                  color: Color(0xFF14B8A6),
+                                  blurRadius: 10,
+                                  spreadRadius: 1.5,
                                 ),
                               ],
                             ),
@@ -168,26 +161,36 @@ class _SplashScreenState extends State<SplashScreen>
                   },
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 22),
 
-              // Brand Title & Verified Badge
+              // Official ScanD Horizontal Logo + Verified Badge
+              SizedBox(
+                height: 44,
+                child: Image.asset(
+                  'assets/branding/scand_logo_on_dark.png',
+                  fit: BoxFit.contain,
+                ),
+              ),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    isVi ? 'Scan Tài Liệu AI' : 'AI Document Scanner',
+                    isVi
+                        ? 'ScanD • Quét Tài Liệu AI Thông Minh'
+                        : 'ScanD • Smart AI Document Scanner',
                     style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                      letterSpacing: -0.3,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5EEAD4),
+                      letterSpacing: 0.2,
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 5),
                   const Icon(
                     Icons.verified_rounded,
-                    color: Color(0xFF5FFBD6),
-                    size: 22,
+                    color: Color(0xFF5EEAD4),
+                    size: 18,
                   ),
                 ],
               ),
@@ -196,8 +199,8 @@ class _SplashScreenState extends State<SplashScreen>
                 padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Text(
                   isVi
-                      ? 'Nhận diện 4 góc mép giấy & AI OCR Tiếng Việt / Chữ viết tay 100% trên thiết bị'
-                      : 'Precision 4-Corner Edge Detection & On-Device Vietnamese / Handwriting AI OCR',
+                      ? 'Nhận diện 4 góc tài liệu chuẩn xác & AI OCR Tiếng Việt / Chữ viết tay 100% trên thiết bị'
+                      : 'Precision 4-Corner Document Detection & On-Device Vietnamese / Handwriting AI OCR',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
@@ -215,7 +218,7 @@ class _SplashScreenState extends State<SplashScreen>
                 height: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2.4,
-                  color: Color(0xFF5FFBD6),
+                  color: Color(0xFF5EEAD4),
                 ),
               ),
               const SizedBox(height: 18),
@@ -235,7 +238,7 @@ class _SplashScreenState extends State<SplashScreen>
                     const Icon(
                       Icons.shield_rounded,
                       size: 15,
-                      color: Color(0xFF5FFBD6),
+                      color: Color(0xFF5EEAD4),
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -259,3 +262,4 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 }
+

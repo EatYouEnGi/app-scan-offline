@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:camera/camera.dart';
 import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +48,9 @@ class _ScannerScreenState extends State<ScannerScreen>
 
   /// Đa giác 4 góc của tờ giấy đang được AI phát hiện trực tiếp trên luồng camera.
   CropQuad? _liveDetectedQuad;
+  CropQuad? _lastAutoCapturedQuad;
+  bool _waitingForNextDocument = false;
+  int _noDocFramesSinceCapture = 0;
   int _stableFrameCount = 0;
   DateTime _lastFrameTime = DateTime.fromMillisecondsSinceEpoch(0);
 
@@ -151,8 +155,9 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
   }
 
-  /// Phân tích trực tiếp luồng ảnh Camera (mỗi ~220ms) để tự động tìm 4 góc tờ giấy
-  /// ở bất kỳ đâu trên màn hình mà không cần khung cố định.
+  /// Phân tích trực tiếp luồng ảnh Camera (mỗi ~220ms) bằng bộ phân loại Tài liệu AI
+  /// (Connected-Component + 4-Edge Contour + Fill Ratio) để phân biệt chính xác
+  /// đâu là tờ giấy/tài liệu thật và đâu là cảnh vật thông thường (màn hình, bàn phím, mặt bàn).
   void _onCameraFrame(CameraImage image) {
     if (_isAnalyzingFrame || _isTakingPicture || !mounted) return;
     final now = DateTime.now();
@@ -165,21 +170,42 @@ class _ScannerScreenState extends State<ScannerScreen>
       if (!mounted) return;
 
       if (detected != null && detected.isValidQuad) {
+        _noDocFramesSinceCapture = 0;
+
+        // Nếu vừa tự chụp xong 1 tờ tài liệu, chờ người dùng lật trang hoặc di chuyển sang tờ mới
+        if (_waitingForNextDocument && _lastAutoCapturedQuad != null) {
+          final simToLast = detected.similarityTo(_lastAutoCapturedQuad!);
+          if (simToLast < 0.84) {
+            _waitingForNextDocument = false;
+          }
+        }
+
         final prev = _liveDetectedQuad;
         final isSteady = prev != null && prev.similarityTo(detected) >= 0.94;
         setState(() {
           _liveDetectedQuad = prev != null
               ? _smoothQuad(prev, detected, 0.45)
               : detected;
-          _stableFrameCount = isSteady ? (_stableFrameCount + 1) : 1;
+          if (_waitingForNextDocument) {
+            _stableFrameCount = 0;
+          } else {
+            _stableFrameCount = isSteady ? (_stableFrameCount + 1) : 1;
+          }
         });
 
-        // Khi AI thấy tờ giấy nằm ổn định liên tục ~5 nhịp (~1.1 giây) và bật chế độ AI Tự chụp -> Tự chụp!
-        if (_aiAutoCapture && _stableFrameCount >= 5 && !_isTakingPicture) {
+        // Khi AI xác nhận đúng là tài liệu thật nằm ổn định liên tục ~6 nhịp (~1.3 giây) -> Tự chụp!
+        if (_aiAutoCapture &&
+            !_waitingForNextDocument &&
+            _stableFrameCount >= 6 &&
+            !_isTakingPicture) {
           _stableFrameCount = 0;
           _capturePhoto(fromAutoTrigger: true);
         }
       } else {
+        _noDocFramesSinceCapture++;
+        if (_noDocFramesSinceCapture >= 2) {
+          _waitingForNextDocument = false;
+        }
         if (_liveDetectedQuad != null || _stableFrameCount > 0) {
           setState(() {
             _liveDetectedQuad = null;
@@ -208,149 +234,453 @@ class _ScannerScreenState extends State<ScannerScreen>
     );
   }
 
-  /// Thuật toán AI Vision nhẹ chạy trực tiếp trên kênh độ sáng (Y-plane / BGRA)
-  /// để bắt biên tờ giấy/tài liệu ở bất kỳ vị trí nào trong khung hình.
+  /// Bộ phân loại & bắt 4 góc Tài Liệu AI (Document vs. Non-Document Classifier):
+  /// 1. Chuẩn hóa luồng ảnh Camera về lưới dọc `pW x pH` (`64 x 84`) theo đúng hệ tọa độ màn hình.
+  /// 2. Đóng hình thái học `3x3` (Morphological Closing) để xóa chữ in tối màu bên trong mặt giấy
+  ///    nhưng vẫn giữ nguyên độ dốc biên (`rawGrad`) ở 4 cạnh mép giấy.
+  /// 3. Loang miền liên thông (Connected-Component Flood Fill) từ vùng trung tâm, dừng tại biên độ dốc lớn.
+  /// 4. Kiểm định 6 tiêu chuẩn khắt khe để loại bỏ hoàn toàn cảnh giả (màn hình máy tính, bàn phím, mặt bàn):
+  ///    - Không bám sát viền khung hình camera (`< 4.5%` lề màn hình).
+  ///    - Độ lấp đầy hình chữ nhật (`Solidity / Fill Ratio >= 0.72`).
+  ///    - Cả 4 cạnh tứ giác phải có biên độ dốc thực sự (`Edge Support >= 0.60`).
+  ///    - Độ tương phản giữa mặt trong tờ giấy và nền bên ngoài (`>= 14` đơn vị luma).
+  ///    - 4 góc trong khoảng phối cảnh hợp lệ (`58° .. 122°`) và tỷ lệ cạnh đối diện cân xứng.
   CropQuad? _detectPaperQuadFromCameraImage(CameraImage image) {
     if (image.planes.isEmpty) return null;
     final plane = image.planes.first;
     final bytes = plane.bytes;
     final rowStride = plane.bytesPerRow;
     final isBgra = image.format.group == ImageFormatGroup.bgra8888;
-    const step = 8;
 
     final rawW = image.width;
     final rawH = image.height;
-    final gW = rawW ~/ step;
-    final gH = rawH ~/ step;
-    if (gW < 16 || gH < 16) return null;
+    if (rawW < 64 || rawH < 64) return null;
 
-    final hist = List<int>.filled(256, 0);
-    final grid = List<int>.filled(gW * gH, 0);
+    const int pW = 64;
+    const int pH = 84;
+    const int total = pW * pH;
 
-    for (int gy = 0; gy < gH; gy++) {
-      final sy = gy * step;
-      for (int gx = 0; gx < gW; gx++) {
-        final sx = gx * step;
-        final offset = sy * rowStride + (isBgra ? sx * 4 + 1 : sx);
-        if (offset >= 0 && offset < bytes.length) {
-          final luma = bytes[offset];
-          grid[gy * gW + gx] = luma;
-          hist[luma]++;
+    final luma = List<int>.filled(total, 0);
+    double sumLuma = 0;
+
+    // 1. Lấy mẫu về hệ tọa độ màn hình dọc (Portrait Normalized Grid 64x84)
+    final bool sensorIsLandscape = rawW > rawH;
+    for (int py = 0; py < pH; py++) {
+      final double v = py / (pH - 1);
+      for (int px = 0; px < pW; px++) {
+        final double u = px / (pW - 1);
+        final int sx;
+        final int sy;
+        if (sensorIsLandscape) {
+          // Cảm biến nằm ngang (xoay 90 độ thuận chiều kim đồng hồ trên Android / một số luồng iOS)
+          sx = (v * (rawW - 1)).round();
+          sy = ((1.0 - u) * (rawH - 1)).round();
+        } else {
+          sx = (u * (rawW - 1)).round();
+          sy = (v * (rawH - 1)).round();
+        }
+
+        final int offset = sy * rowStride + (isBgra ? sx * 4 : sx);
+        int yVal = 0;
+        if (isBgra) {
+          if (offset >= 0 && offset + 2 < bytes.length) {
+            final b = bytes[offset];
+            final g = bytes[offset + 1];
+            final r = bytes[offset + 2];
+            yVal = ((r * 77 + g * 150 + b * 29) >> 8).clamp(0, 255);
+          }
+        } else {
+          if (offset >= 0 && offset < bytes.length) {
+            yVal = bytes[offset];
+          }
+        }
+        luma[py * pW + px] = yVal;
+        sumLuma += yVal;
+      }
+    }
+
+    final avgLuma = sumLuma / total;
+    _goodLighting = avgLuma >= 70;
+
+    // 2. Đóng hình thái học 3x3 (Max-filter / Dilation nhẹ) để lấp chữ in bên trong mặt giấy
+    //    và tính Gradient Sobel trên bề mặt đã làm mịn chữ.
+    final surfaceLuma = List<int>.filled(total, 0);
+    for (int y = 0; y < pH; y++) {
+      final y0 = math.max(0, y - 1);
+      final y1 = math.min(pH - 1, y + 1);
+      for (int x = 0; x < pW; x++) {
+        final x0 = math.max(0, x - 1);
+        final x1 = math.min(pW - 1, x + 1);
+        int sum9 = 0;
+        int max9 = 0;
+        int cnt = 0;
+        for (int yy = y0; yy <= y1; yy++) {
+          final rowOff = yy * pW;
+          for (int xx = x0; xx <= x1; xx++) {
+            final v = luma[rowOff + xx];
+            sum9 += v;
+            if (v > max9) max9 = v;
+            cnt++;
+          }
+        }
+        // Kết hợp trung bình cục bộ và đỉnh sáng cục bộ để xóa nét chữ tối màu trên nền giấy
+        final mean9 = sum9 ~/ cnt;
+        surfaceLuma[y * pW + x] = ((mean9 * 3 + max9 * 2) ~/ 5).clamp(0, 255);
+      }
+    }
+
+    final gradMag = List<int>.filled(total, 0);
+    for (int y = 1; y < pH - 1; y++) {
+      final row = y * pW;
+      for (int x = 1; x < pW - 1; x++) {
+        final idx = row + x;
+        final gx = (surfaceLuma[idx + 1] - surfaceLuma[idx - 1]).abs();
+        final gy = (surfaceLuma[idx + pW] - surfaceLuma[idx - pW]).abs();
+        gradMag[idx] = gx + gy;
+      }
+    }
+
+    // 3. Thử các hạt giống (Seeds) ở vùng trung tâm khung ngắm để tìm miền liên thông của tờ giấy
+    const seedCoords = <List<double>>[
+      [0.50, 0.50],
+      [0.50, 0.40],
+      [0.50, 0.60],
+      [0.40, 0.50],
+      [0.60, 0.50],
+    ];
+
+    CropQuad? bestQuad;
+    double bestScore = 0.0;
+
+    for (final sc in seedCoords) {
+      final sx = (sc[0] * (pW - 1)).round().clamp(6, pW - 7);
+      final sy = (sc[1] * (pH - 1)).round().clamp(6, pH - 7);
+
+      // Tính độ sáng nền và độ đồng nhất của vùng hạt giống 5x5
+      int seedSum = 0;
+      int seedGradSum = 0;
+      int seedCnt = 0;
+      for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+          final idx = (sy + dy) * pW + (sx + dx);
+          seedSum += surfaceLuma[idx];
+          seedGradSum += gradMag[idx];
+          seedCnt++;
         }
       }
-    }
+      final seedMean = seedSum ~/ seedCnt;
+      final seedAvgGrad = seedGradSum / seedCnt;
 
-    final total = gW * gH;
-    double sum = 0;
-    for (int i = 0; i < 256; i++) {
-      sum += i * hist[i];
-    }
-    final avgLuma = sum / total;
-    _goodLighting = avgLuma >= 75;
+      // Mặt giấy/tài liệu phải có độ sáng nền hợp lý (>= 92) và vùng tâm không bị nhiễu hỗn loạn (như bàn phím cơ)
+      if (seedMean < 92 || seedAvgGrad > 28) continue;
 
-    double sumB = 0;
-    int wB = 0;
-    double maxVar = 0;
-    int threshold = 145;
-    for (int t = 0; t < 256; t++) {
-      wB += hist[t];
-      if (wB == 0) continue;
-      final wF = total - wB;
-      if (wF == 0) break;
-      sumB += t * hist[t];
-      final mB = sumB / wB;
-      final mF = (sum - sumB) / wF;
-      final between = wB.toDouble() * wF.toDouble() * (mB - mF) * (mB - mF);
-      if (between > maxVar) {
-        maxVar = between;
-        threshold = t;
-      }
-    }
-    threshold = threshold.clamp(85, 225);
+      final visited = List<bool>.filled(total, false);
+      final queue = List<int>.filled(total, 0);
+      int head = 0;
+      int tail = 0;
 
-    double minSum = double.infinity;
-    double maxSum = -double.infinity;
-    double minDiff = double.infinity;
-    double maxDiff = -double.infinity;
+      final startIdx = sy * pW + sx;
+      visited[startIdx] = true;
+      queue[tail++] = startIdx;
 
-    NormalizedPoint? tl;
-    NormalizedPoint? tr;
-    NormalizedPoint? br;
-    NormalizedPoint? bl;
-    int paperCount = 0;
-    int edgeCount = 0;
+      int borderTouchCount = 0;
+      const int maxLumaDiffFromSeed = 40;
+      const int maxStepDiff = 14;
+      const int edgeBarrier = 26;
 
-    final marginX = (gW * 0.05).round().clamp(2, 8);
-    final marginY = (gH * 0.05).round().clamp(2, 8);
+      while (head < tail) {
+        final curr = queue[head++];
+        final cy = curr ~/ pW;
+        final cx = curr % pW;
+        final currLuma = surfaceLuma[curr];
 
-    for (int gy = marginY; gy < gH - marginY; gy++) {
-      for (int gx = marginX; gx < gW - marginX; gx++) {
-        final idx = gy * gW + gx;
-        final v = grid[idx];
-        if (v >= threshold) {
-          paperCount++;
-          final grad = (grid[idx + 1] - grid[idx - 1]).abs() +
-              (grid[idx + gW] - grid[idx - gW]).abs();
-          if (grad > 24) {
-            edgeCount++;
-            final double nx = Platform.isIOS
-                ? gx / (gW - 1)
-                : 1.0 - (gy / (gH - 1));
-            final double ny = Platform.isIOS
-                ? gy / (gH - 1)
-                : gx / (gW - 1);
+        if (cx <= 2 || cx >= pW - 3 || cy <= 2 || cy >= pH - 3) {
+          borderTouchCount++;
+        }
 
-            final s = nx + ny;
-            final d = nx - ny;
-            if (s < minSum) {
-              minSum = s;
-              tl = NormalizedPoint(nx, ny);
-            }
-            if (s > maxSum) {
-              maxSum = s;
-              br = NormalizedPoint(nx, ny);
-            }
-            if (d > maxDiff) {
-              maxDiff = d;
-              tr = NormalizedPoint(nx, ny);
-            }
-            if (d < minDiff) {
-              minDiff = d;
-              bl = NormalizedPoint(nx, ny);
-            }
+        const dirs = <List<int>>[
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ];
+        for (final d in dirs) {
+          final nx = cx + d[0];
+          final ny = cy + d[1];
+          if (nx < 1 || nx >= pW - 1 || ny < 1 || ny >= pH - 1) continue;
+          final nIdx = ny * pW + nx;
+          if (visited[nIdx]) continue;
+
+          final nLuma = surfaceLuma[nIdx];
+          final nGrad = gradMag[nIdx];
+          if (nGrad <= edgeBarrier &&
+              (nLuma - seedMean).abs() <= maxLumaDiffFromSeed &&
+              (nLuma - currLuma).abs() <= maxStepDiff) {
+            visited[nIdx] = true;
+            queue[tail++] = nIdx;
           }
         }
       }
+
+      final compCount = tail;
+      final compFrac = compCount / total;
+      // Quy tắc 1: Diện tích miền liên thông phải từ 10% đến 75% khung hình và không tràn ra mép màn hình
+      if (compFrac < 0.10 || compFrac > 0.75) continue;
+      if (borderTouchCount / compCount > 0.05) continue;
+
+      // Tìm các điểm biên của miền liên thông để xác định 4 đỉnh tứ giác
+      double minSum = double.infinity;
+      double maxSum = -double.infinity;
+      double minDiff = double.infinity;
+      double maxDiff = -double.infinity;
+      NormalizedPoint? tl;
+      NormalizedPoint? tr;
+      NormalizedPoint? br;
+      NormalizedPoint? bl;
+
+      for (int i = 0; i < compCount; i++) {
+        final idx = queue[i];
+        final cy = idx ~/ pW;
+        final cx = idx % pW;
+        final isBoundary = !visited[idx - 1] ||
+            !visited[idx + 1] ||
+            !visited[idx - pW] ||
+            !visited[idx + pW];
+        if (!isBoundary) continue;
+
+        final nx = cx / (pW - 1);
+        final ny = cy / (pH - 1);
+        final s = nx + ny;
+        final d = nx - ny;
+
+        if (s < minSum) {
+          minSum = s;
+          tl = NormalizedPoint(nx, ny);
+        }
+        if (s > maxSum) {
+          maxSum = s;
+          br = NormalizedPoint(nx, ny);
+        }
+        if (d > maxDiff) {
+          maxDiff = d;
+          tr = NormalizedPoint(nx, ny);
+        }
+        if (d < minDiff) {
+          minDiff = d;
+          bl = NormalizedPoint(nx, ny);
+        }
+      }
+
+      if (tl == null || tr == null || br == null || bl == null) continue;
+
+      final quad = CropQuad(
+        topLeft: tl.clamp(),
+        topRight: tr.clamp(),
+        bottomRight: br.clamp(),
+        bottomLeft: bl.clamp(),
+      );
+      if (!quad.isValidQuad) continue;
+
+      // Quy tắc 2: Không cho phép >= 2 góc nằm sát mép ngoài khung hình (< 4.5% lề)
+      int nearBorderCorners = 0;
+      for (final c in quad.corners) {
+        if (c.x < 0.045 || c.x > 0.955 || c.y < 0.045 || c.y > 0.955) {
+          nearBorderCorners++;
+        }
+      }
+      if (nearBorderCorners >= 2) continue;
+
+      // Quy tắc 3: Kiểm tra hình học phối cảnh (Diện tích, Tỷ lệ cạnh đối diện, Góc trong 58°..122°)
+      final qArea = quad.normalizedArea;
+      if (qArea < 0.12 || qArea > 0.76) continue;
+      if (!_hasValidDocumentPerspectiveGeometry(quad)) continue;
+
+      // Quy tắc 4: Độ đặc hình chữ nhật (Rectangular Solidity / Fill Ratio >= 0.72)
+      final compRatioToQuad = compFrac / qArea;
+      if (compRatioToQuad < 0.68 || compRatioToQuad > 1.18) continue;
+
+      // Quy tắc 5: Kiểm định độ tương phản biên dọc theo cả 4 cạnh (4-Side Edge Support)
+      final edgeScore = _evaluateQuadFourSidesContrast(
+        quad: quad,
+        surfaceLuma: surfaceLuma,
+        gradMag: gradMag,
+        pW: pW,
+        pH: pH,
+        seedMean: seedMean,
+      );
+      if (edgeScore < 0.60) continue;
+
+      final totalScore = edgeScore * 0.65 +
+          compRatioToQuad.clamp(0.0, 1.0) * 0.25 +
+          math.min(qArea, 0.45) * 0.10;
+      if (totalScore > bestScore) {
+        bestScore = totalScore;
+        bestQuad = quad;
+      }
     }
 
-    final ratio = paperCount / total;
-    if (tl == null ||
-        tr == null ||
-        br == null ||
-        bl == null ||
-        edgeCount < 14 ||
-        ratio < 0.08 ||
-        ratio > 0.88) {
-      return null;
+    return bestQuad;
+  }
+
+  /// Kiểm tra tứ giác có đúng hình học phối cảnh của một tờ tài liệu hình chữ nhật hay không.
+  bool _hasValidDocumentPerspectiveGeometry(CropQuad q) {
+    double dist(NormalizedPoint a, NormalizedPoint b) {
+      return math.sqrt(math.pow(a.x - b.x, 2) + math.pow(a.y - b.y, 2));
     }
 
-    final quad = CropQuad(
-      topLeft: tl.clamp(),
-      topRight: tr.clamp(),
-      bottomRight: br.clamp(),
-      bottomLeft: bl.clamp(),
-    );
-    return (quad.isValidQuad &&
-            quad.normalizedArea >= 0.10 &&
-            quad.normalizedArea <= 0.86)
-        ? quad
-        : null;
+    final topW = dist(q.topLeft, q.topRight);
+    final bottomW = dist(q.bottomLeft, q.bottomRight);
+    final leftH = dist(q.topLeft, q.bottomLeft);
+    final rightH = dist(q.topRight, q.bottomRight);
+
+    if (topW < 0.18 || bottomW < 0.18 || leftH < 0.18 || rightH < 0.18) {
+      return false;
+    }
+
+    final wRatio = topW / bottomW;
+    final hRatio = leftH / rightH;
+    // Hai cạnh đối diện của tờ giấy không thể lệch nhau quá mức dưới phối cảnh bình thường
+    if (wRatio < 0.54 || wRatio > 1.85 || hRatio < 0.54 || hRatio > 1.85) {
+      return false;
+    }
+
+    final avgW = (topW + bottomW) * 0.5;
+    final avgH = (leftH + rightH) * 0.5;
+    final aspect = avgW / avgH;
+    if (aspect < 0.42 || aspect > 1.80) return false;
+
+    // Kiểm tra cả 4 góc trong đều phải nằm trong khoảng [58°, 122°]
+    final pts = q.corners;
+    for (int i = 0; i < 4; i++) {
+      final prev = pts[(i + 3) % 4];
+      final curr = pts[i];
+      final next = pts[(i + 1) % 4];
+      final v1x = prev.x - curr.x;
+      final v1y = prev.y - curr.y;
+      final v2x = next.x - curr.x;
+      final v2y = next.y - curr.y;
+      final len1 = math.sqrt(v1x * v1x + v1y * v1y);
+      final len2 = math.sqrt(v2x * v2x + v2y * v2y);
+      if (len1 < 1e-4 || len2 < 1e-4) return false;
+      final cosAngle = ((v1x * v2x + v1y * v2y) / (len1 * len2)).clamp(-1.0, 1.0);
+      final angleDeg = math.acos(cosAngle) * 180.0 / math.pi;
+      if (angleDeg < 58.0 || angleDeg > 122.0) return false;
+    }
+
+    return true;
+  }
+
+  /// Đo tỷ lệ điểm biên thực sự dọc theo 4 đoạn thẳng `TL-TR`, `TR-BR`, `BR-BL`, `BL-TL`
+  /// và độ chênh lệch độ sáng giữa mặt trong tờ giấy với nền bên ngoài.
+  double _evaluateQuadFourSidesContrast({
+    required CropQuad quad,
+    required List<int> surfaceLuma,
+    required List<int> gradMag,
+    required int pW,
+    required int pH,
+    required int seedMean,
+  }) {
+    final pts = quad.corners;
+    final cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) * 0.25;
+    final cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) * 0.25;
+
+    int validSides = 0;
+    double sumSideRatio = 0.0;
+    int insideLumaSum = 0;
+    int outsideLumaSum = 0;
+    int contrastSamples = 0;
+
+    const int samplesPerSide = 14;
+    for (int s = 0; s < 4; s++) {
+      final a = pts[s];
+      final b = pts[(s + 1) % 4];
+      int edgeHits = 0;
+
+      for (int k = 2; k < samplesPerSide - 1; k++) {
+        final t = k / samplesPerSide;
+        final px = a.x + (b.x - a.x) * t;
+        final py = a.y + (b.y - a.y) * t;
+
+        final gx = (px * (pW - 1)).round().clamp(2, pW - 3);
+        final gy = (py * (pH - 1)).round().clamp(2, pH - 3);
+
+        // Tìm độ dốc lớn nhất trong lân cận 3x3 quanh điểm biên
+        int localMaxGrad = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            final g = gradMag[(gy + dy) * pW + (gx + dx)];
+            if (g > localMaxGrad) localMaxGrad = g;
+          }
+        }
+
+        // Lấy mẫu điểm lùi vào trong tâm tứ giác và điểm vươn ra ngoài nền
+        final vx = cx - px;
+        final vy = cy - py;
+        final vLen = math.sqrt(vx * vx + vy * vy);
+        int stepContrast = 0;
+        if (vLen > 0.02) {
+          final inX = ((px + vx / vLen * 0.045) * (pW - 1)).round().clamp(1, pW - 2);
+          final inY = ((py + vy / vLen * 0.045) * (pH - 1)).round().clamp(1, pH - 2);
+          final outX = ((px - vx / vLen * 0.045) * (pW - 1)).round().clamp(1, pW - 2);
+          final outY = ((py - vy / vLen * 0.045) * (pH - 1)).round().clamp(1, pH - 2);
+          final inLuma = surfaceLuma[inY * pW + inX];
+          final outLuma = surfaceLuma[outY * pW + outX];
+          insideLumaSum += inLuma;
+          outsideLumaSum += outLuma;
+          contrastSamples++;
+          stepContrast = (inLuma - outLuma).abs();
+        }
+
+        if (localMaxGrad >= 18 || stepContrast >= 16) {
+          edgeHits++;
+        }
+      }
+
+      final sideRatio = edgeHits / (samplesPerSide - 3);
+      sumSideRatio += sideRatio;
+      if (sideRatio >= 0.55) {
+        validSides++;
+      }
+    }
+
+    // Phải có ít nhất 3 trên 4 cạnh đạt chuẩn biên thẳng rõ nét
+    if (validSides < 3 || contrastSamples == 0) return 0.0;
+
+    final meanIn = insideLumaSum / contrastSamples;
+    final meanOut = outsideLumaSum / contrastSamples;
+    // Mặt trong tờ giấy phải có độ tương phản rõ so với nền bên ngoài
+    if ((meanIn - meanOut).abs() < 14.0) return 0.0;
+
+    return sumSideRatio / 4.0;
   }
 
   Future<void> _capturePhoto({bool fromAutoTrigger = false}) async {
     final cam = _controller;
     if (cam == null || !cam.value.isInitialized || _isTakingPicture) return;
 
+    // Khi đang bật chế độ Quét Tài Liệu AI, chỉ chụp khi AI đã nhận diện được tài liệu hợp lệ!
+    if (_aiAutoCapture && _liveDetectedQuad == null) {
+      if (!fromAutoTrigger && mounted) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: StitchTheme.surfaceProElevated,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+            content: Text(
+              _tr(
+                'Chưa nhận diện được tài liệu! Hãy đưa giấy/tài liệu vào khung hình hoặc bấm "Chụp tay" ở góc trên để chụp tự do.',
+                'No document detected! Point at a document or switch to "Manual" at the top right.',
+              ),
+              style: const TextStyle(color: Colors.white, fontSize: 12.5),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final capturedQuadSnapshot = _liveDetectedQuad;
     setState(() => _isTakingPicture = true);
     try {
       if (cam.value.isStreamingImages) {
@@ -367,11 +697,16 @@ class _ScannerScreenState extends State<ScannerScreen>
       setState(() {
         _capturedPaths.add(photo.path);
         _stableFrameCount = 0;
+        if (fromAutoTrigger && capturedQuadSnapshot != null) {
+          _lastAutoCapturedQuad = capturedQuadSnapshot;
+          _waitingForNextDocument = true;
+          _noDocFramesSinceCapture = 0;
+        }
       });
 
       if (mounted && _controller != null && _controller!.value.isInitialized) {
         if (fromAutoTrigger) {
-          await Future<void>.delayed(const Duration(milliseconds: 900));
+          await Future<void>.delayed(const Duration(milliseconds: 1100));
         }
         if (mounted &&
             _controller != null &&
@@ -525,8 +860,8 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
 
     final hasDoc = _liveDetectedQuad != null;
-    final stabilityProgress = (_stableFrameCount / 5.0).clamp(0.0, 1.0);
-    final countdownSec = (3 - (_stableFrameCount * 0.6).floor()).clamp(1, 3);
+    final stabilityProgress = (_stableFrameCount / 6.0).clamp(0.0, 1.0);
+    final countdownSec = (3 - (_stableFrameCount * 0.5).floor()).clamp(1, 3);
 
     return Stack(
       fit: StackFit.expand,
@@ -614,17 +949,25 @@ class _ScannerScreenState extends State<ScannerScreen>
                               alignment: Alignment.center,
                               children: [
                                 CircularProgressIndicator(
-                                  value: hasDoc ? stabilityProgress : 0.25,
+                                  value: _waitingForNextDocument
+                                      ? 1.0
+                                      : (hasDoc ? stabilityProgress : 0.15),
                                   strokeWidth: 2.3,
                                   backgroundColor: StitchTheme.borderDark,
-                                  color: StitchTheme.tertiaryFixed,
+                                  color: _waitingForNextDocument
+                                      ? StitchTheme.statusSuccess
+                                      : StitchTheme.tertiaryFixed,
                                 ),
                                 Text(
-                                  hasDoc ? '$countdownSec' : 'AI',
-                                  style: const TextStyle(
+                                  _waitingForNextDocument
+                                      ? '✓'
+                                      : (hasDoc ? '$countdownSec' : 'AI'),
+                                  style: TextStyle(
                                     fontSize: 8,
                                     fontWeight: FontWeight.w700,
-                                    color: StitchTheme.tertiaryFixed,
+                                    color: _waitingForNextDocument
+                                        ? StitchTheme.statusSuccess
+                                        : StitchTheme.tertiaryFixed,
                                   ),
                                 ),
                               ],
@@ -632,9 +975,20 @@ class _ScannerScreenState extends State<ScannerScreen>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            hasDoc
-                                ? _tr('Giữ yên... Tự chụp AI', 'Hold steady... AI Auto')
-                                : _tr('Hướng vào giấy để AI bắt mép', 'Point at document for AI edge'),
+                            _waitingForNextDocument
+                                ? _tr(
+                                    'Đã chụp! Đổi trang tiếp theo...',
+                                    'Captured! Move to next page...',
+                                  )
+                                : (hasDoc
+                                    ? _tr(
+                                        'Giữ yên... Tự chụp AI',
+                                        'Hold steady... AI Auto',
+                                      )
+                                    : _tr(
+                                        'Đưa tài liệu vào để AI nhận diện',
+                                        'Point at a document to scan',
+                                      )),
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,

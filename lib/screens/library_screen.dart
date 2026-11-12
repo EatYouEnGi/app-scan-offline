@@ -471,13 +471,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: StitchTheme.primaryContainerLight,
               borderRadius: BorderRadius.circular(11),
+              boxShadow: [
+                BoxShadow(
+                  color: StitchTheme.primary.withValues(alpha: 0.16),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            child: const Icon(
-              Icons.document_scanner_rounded,
-              color: StitchTheme.primary,
-              size: 24,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(11),
+              child: Image.asset(
+                'assets/branding/scand_icon_rounded.png',
+                fit: BoxFit.cover,
+              ),
             ),
           ),
           const SizedBox(width: 10),
@@ -487,14 +495,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
               children: [
                 Row(
                   children: [
-                    Flexible(
+                    const Flexible(
                       child: Text(
-                        _tr('Scan Tài Liệu AI', 'AI Document Scanner'),
+                        'ScanD',
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.2,
+                        style: TextStyle(
+                          fontSize: 17.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
                           color: StitchTheme.onSurface,
                         ),
                       ),
@@ -510,8 +518,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 const SizedBox(height: 2),
                 Text(
                   _tr(
-                    'Quét tự động • OCR Tiếng Việt • PDF',
-                    'Auto Scan • Vietnamese OCR • PDF',
+                    'Quét AI tự động • OCR Tiếng Việt • PDF',
+                    'AI Auto Scan • Vietnamese OCR • PDF',
                   ),
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
