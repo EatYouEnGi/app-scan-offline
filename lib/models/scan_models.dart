@@ -220,9 +220,9 @@ enum PaperSizePreset {
 
 /// Mức nén khi xuất hoặc nén PDF.
 enum PdfQualityPreset {
-  high('Chất lượng cao (In ấn)', 92, 2200),
-  medium('Cân bằng (Khuyên dùng)', 78, 1650),
-  compressed('Dung lượng nhỏ (Gửi nhanh)', 55, 1200);
+  high('Chất lượng cao (In ấn 300 DPI)', 94, 3200),
+  medium('Cân bằng sắc nét (Khuyên dùng)', 88, 2480),
+  compressed('Dung lượng nhỏ (Gửi nhanh)', 72, 1650);
 
   final String label;
   final int jpegQuality;

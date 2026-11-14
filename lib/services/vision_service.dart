@@ -18,7 +18,7 @@ class _ProcessPagePayload {
     required this.cropQuad,
     required this.rotationDegrees,
     required this.filter,
-    this.maxDimension = 2000,
+    this.maxDimension = 2800,
   });
 }
 
@@ -61,7 +61,7 @@ class VisionService {
     required CropQuad cropQuad,
     required int rotationDegrees,
     required ScanFilterType filter,
-    int maxDimension = 2000,
+    int maxDimension = 2800,
   }) async {
     final file = File(originalImagePath);
     if (!await file.exists()) {
@@ -569,7 +569,7 @@ class VisionService {
     // 4. Áp dụng bộ lọc tài liệu.
     working = applyDocumentFilter(working, payload.filter);
 
-    return Uint8List.fromList(img.encodeJpg(working, quality: 90));
+    return Uint8List.fromList(img.encodeJpg(working, quality: 94));
   }
 
   /// Biến đổi phối cảnh 4 góc (Homography + nội suy song tuyến tính) để làm phẳng trang bị nghiêng.
@@ -736,37 +736,193 @@ class VisionService {
     }
   }
 
-  /// Bộ lọc "Màu sắc nét" (Magic Color): làm trắng nền giấy bị ngả vàng/bóng mờ
-  /// nhưng vẫn giữ nguyên màu mực bút ký và con dấu đỏ.
+  /// Bộ lọc "Màu sắc nét" (Magic Color chuẩn CamScanner):
+  /// 1) Ước lượng bản đồ ánh sáng nền cục bộ (Local Illumination Flattening) trên lưới 24x32
+  ///    để khử bóng đổ/ánh đèn không đều, giúp nền giấy trắng sáng đồng nhất từ trên xuống dưới.
+  /// 2) Cân bằng chữ đen đậm sâu & bảo toàn/tăng nhẹ độ rực cho con dấu đỏ, chữ ký xanh, hoa văn.
+  /// 3) Làm nét chữ thông minh (Adaptive Unsharp Mask) chỉ tác động lên biên chữ, không tăng nhiễu nền.
   static img.Image _applyMagicColor(img.Image src) {
-    final out = src.clone();
-    for (int y = 0; y < out.height; y++) {
-      for (int x = 0; x < out.width; x++) {
-        final p = out.getPixel(x, y);
-        final r = p.r.toInt();
-        final g = p.g.toInt();
-        final b = p.b.toInt();
-        final luma = (r * 77 + g * 150 + b * 29) >> 8;
+    final w = src.width;
+    final h = src.height;
+    if (w < 8 || h < 8) return src.clone();
 
-        if (luma > 185) {
-          // Đẩy vùng nền giấy sáng lên trắng sạch.
-          final boost = ((luma - 185) * 1.15).round();
+    // Bước 1: Ước lượng nền sáng cục bộ trên lưới thô (24x32) bằng giá trị sáng 90th-percentile
+    const int gridX = 24;
+    const int gridY = 32;
+    final bgR = Float64List(gridX * gridY);
+    final bgG = Float64List(gridX * gridY);
+    final bgB = Float64List(gridX * gridY);
+
+    for (int gy = 0; gy < gridY; gy++) {
+      final yStart = (gy * h) ~/ gridY;
+      final yEnd = math.max(yStart + 1, ((gy + 1) * h) ~/ gridY);
+      final yStep = math.max(1, (yEnd - yStart) ~/ 6);
+
+      for (int gx = 0; gx < gridX; gx++) {
+        final xStart = (gx * w) ~/ gridX;
+        final xEnd = math.max(xStart + 1, ((gx + 1) * w) ~/ gridX);
+        final xStep = math.max(1, (xEnd - xStart) ~/ 6);
+
+        final samples = <({int l, int r, int g, int b})>[];
+        for (int y = yStart; y < yEnd; y += yStep) {
+          for (int x = xStart; x < xEnd; x += xStep) {
+            final p = src.getPixel(x, y);
+            final r = p.r.toInt();
+            final g = p.g.toInt();
+            final b = p.b.toInt();
+            final l = (r * 77 + g * 150 + b * 29) >> 8;
+            samples.add((l: l, r: r, g: g, b: b));
+          }
+        }
+        samples.sort((a, b) => a.l.compareTo(b.l));
+        final pickIdx = ((samples.length - 1) * 0.88).round().clamp(0, samples.length - 1);
+        final picked = samples[pickIdx];
+        final gIdx = gy * gridX + gx;
+        bgR[gIdx] = math.max(95.0, picked.r.toDouble());
+        bgG[gIdx] = math.max(95.0, picked.g.toDouble());
+        bgB[gIdx] = math.max(95.0, picked.b.toDouble());
+      }
+    }
+
+    // Làm mịn 3x3 bản đồ nền để chuyển tiếp ánh sáng mượt mà không bị viền ô
+    final smoothBgR = Float64List(gridX * gridY);
+    final smoothBgG = Float64List(gridX * gridY);
+    final smoothBgB = Float64List(gridX * gridY);
+    for (int gy = 0; gy < gridY; gy++) {
+      for (int gx = 0; gx < gridX; gx++) {
+        double sr = 0, sg = 0, sb = 0;
+        int cnt = 0;
+        for (int dy = -1; dy <= 1; dy++) {
+          final ny = gy + dy;
+          if (ny < 0 || ny >= gridY) continue;
+          for (int dx = -1; dx <= 1; dx++) {
+            final nx = gx + dx;
+            if (nx < 0 || nx >= gridX) continue;
+            final nIdx = ny * gridX + nx;
+            sr += bgR[nIdx];
+            sg += bgG[nIdx];
+            sb += bgB[nIdx];
+            cnt++;
+          }
+        }
+        final idx = gy * gridX + gx;
+        smoothBgR[idx] = sr / cnt;
+        smoothBgG[idx] = sg / cnt;
+        smoothBgB[idx] = sb / cnt;
+      }
+    }
+
+    // Bước 2: Chuẩn hóa nền + Chroma-Aware Tone Curve
+    final toned = img.Image(width: w, height: h);
+    for (int y = 0; y < h; y++) {
+      final fy = ((y + 0.5) * gridY / h - 0.5).clamp(0.0, (gridY - 1).toDouble());
+      final gy0 = fy.floor();
+      final gy1 = math.min(gridY - 1, gy0 + 1);
+      final ty = fy - gy0;
+
+      for (int x = 0; x < w; x++) {
+        final fx = ((x + 0.5) * gridX / w - 0.5).clamp(0.0, (gridX - 1).toDouble());
+        final gx0 = fx.floor();
+        final gx1 = math.min(gridX - 1, gx0 + 1);
+        final tx = fx - gx0;
+
+        final i00 = gy0 * gridX + gx0;
+        final i10 = gy0 * gridX + gx1;
+        final i01 = gy1 * gridX + gx0;
+        final i11 = gy1 * gridX + gx1;
+
+        final localBgR = (smoothBgR[i00] * (1 - tx) + smoothBgR[i10] * tx) * (1 - ty) +
+            (smoothBgR[i01] * (1 - tx) + smoothBgR[i11] * tx) * ty;
+        final localBgG = (smoothBgG[i00] * (1 - tx) + smoothBgG[i10] * tx) * (1 - ty) +
+            (smoothBgG[i01] * (1 - tx) + smoothBgG[i11] * tx) * ty;
+        final localBgB = (smoothBgB[i00] * (1 - tx) + smoothBgB[i10] * tx) * (1 - ty) +
+            (smoothBgB[i01] * (1 - tx) + smoothBgB[i11] * tx) * ty;
+
+        final p = src.getPixel(x, y);
+        final r0 = p.r.toDouble();
+        final g0 = p.g.toDouble();
+        final b0 = p.b.toDouble();
+
+        // Chia theo ánh sáng nền cục bộ (giữ 12% sắc độ gốc để không cháy hoa văn vàng nhạt)
+        double r = (r0 * 252.0 / localBgR) * 0.88 + r0 * 0.12;
+        double g = (g0 * 252.0 / localBgG) * 0.88 + g0 * 0.12;
+        double b = (b0 * 252.0 / localBgB) * 0.88 + b0 * 0.12;
+
+        r = r.clamp(0.0, 255.0);
+        g = g.clamp(0.0, 255.0);
+        b = b.clamp(0.0, 255.0);
+
+        final maxC = math.max(r, math.max(g, b));
+        final minC = math.min(r, math.min(g, b));
+        final chroma = maxC - minC;
+        final luma = 0.299 * r + 0.587 * g + 0.114 * b;
+
+        if (luma >= 216 && chroma < 24) {
+          // Đẩy nền giấy trắng sạch tinh khiết như CamScanner
+          final t = ((luma - 216) / 39.0).clamp(0.0, 1.0);
+          final boost = t * (255.0 - luma);
+          r = (r + boost).clamp(0.0, 255.0);
+          g = (g + boost).clamp(0.0, 255.0);
+          b = (b + boost).clamp(0.0, 255.0);
+        } else if (chroma >= 26) {
+          // Bảo toàn & làm rực nét con dấu đỏ, chữ ký mực xanh, hoa văn màu
+          final satBoost = 1.24;
+          r = (luma + (r - luma) * satBoost).clamp(0.0, 255.0);
+          g = (luma + (g - luma) * satBoost).clamp(0.0, 255.0);
+          b = (luma + (b - luma) * satBoost).clamp(0.0, 255.0);
+          if (luma < 175) {
+            r *= 0.90;
+            g *= 0.90;
+            b *= 0.90;
+          }
+        } else {
+          // Vùng chữ in đen / đường kẻ: kéo tương phản sâu (S-curve) cho chữ đanh sắc nét
+          final normL = (luma / 216.0).clamp(0.0, 1.0);
+          final targetL = math.pow(normL, 1.38) * 216.0;
+          final scale = luma > 1.0 ? (targetL / luma) : 1.0;
+          r = (r * scale).clamp(0.0, 255.0);
+          g = (g * scale).clamp(0.0, 255.0);
+          b = (b * scale).clamp(0.0, 255.0);
+        }
+
+        toned.setPixelRgb(x, y, r.round(), g.round(), b.round());
+      }
+    }
+
+    // Bước 3: Adaptive Unsharp Mask 3x3 (chỉ làm nét biên chữ, giữ nền trắng mịn)
+    final out = toned.clone();
+    const double sharpAmount = 0.48;
+    const int sharpThreshold = 6;
+    for (int y = 1; y < h - 1; y++) {
+      for (int x = 1; x < w - 1; x++) {
+        final c = toned.getPixel(x, y);
+        final u = toned.getPixel(x, y - 1);
+        final d = toned.getPixel(x, y + 1);
+        final l = toned.getPixel(x - 1, y);
+        final rPx = toned.getPixel(x + 1, y);
+
+        final avgR = (u.r + d.r + l.r + rPx.r + c.r * 2) / 6.0;
+        final avgG = (u.g + d.g + l.g + rPx.g + c.g * 2) / 6.0;
+        final avgB = (u.b + d.b + l.b + rPx.b + c.b * 2) / 6.0;
+
+        final diffR = c.r - avgR;
+        final diffG = c.g - avgG;
+        final diffB = c.b - avgB;
+
+        if (diffR.abs() >= sharpThreshold ||
+            diffG.abs() >= sharpThreshold ||
+            diffB.abs() >= sharpThreshold) {
           out.setPixelRgb(
             x,
             y,
-            (r + boost).clamp(0, 255),
-            (g + boost).clamp(0, 255),
-            (b + boost).clamp(0, 255),
+            (c.r + diffR * sharpAmount).round().clamp(0, 255),
+            (c.g + diffG * sharpAmount).round().clamp(0, 255),
+            (c.b + diffB * sharpAmount).round().clamp(0, 255),
           );
-        } else {
-          // Tăng độ đậm cho nét chữ và con dấu.
-          final nr = ((r - 128) * 1.28 + 128).round().clamp(0, 255);
-          final ng = ((g - 128) * 1.28 + 128).round().clamp(0, 255);
-          final nb = ((b - 128) * 1.28 + 128).round().clamp(0, 255);
-          out.setPixelRgb(x, y, nr, ng, nb);
         }
       }
     }
+
     return out;
   }
 

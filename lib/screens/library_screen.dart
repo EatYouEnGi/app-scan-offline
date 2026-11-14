@@ -61,14 +61,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     super.dispose();
   }
 
-  Future<void> _startAiScan({bool forceBuiltInCamera = false}) async {
-    List<String>? capturedPaths;
-
-    if (!forceBuiltInCamera) {
-      capturedPaths = await widget.appState.launchNativeAiScanner(maxPages: 24);
-    }
+  Future<void> _startAiScan() async {
+    List<String>? capturedPaths =
+        await widget.appState.launchNativeAiScanner(maxPages: 24);
+    bool usedBuiltInFallback = false;
 
     if (capturedPaths == null && mounted) {
+      usedBuiltInFallback = true;
       capturedPaths = await Navigator.of(context).push<List<String>>(
         MaterialPageRoute(
           builder: (_) => ScannerScreen(isVi: widget.appState.isVi),
@@ -80,7 +79,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     final doc = await widget.appState.createDocumentFromImages(
       sourceImagePaths: capturedPaths,
-      alreadyCroppedByAi: !forceBuiltInCamera,
+      alreadyCroppedByAi: !usedBuiltInFallback,
     );
 
     if (!mounted) return;
@@ -308,35 +307,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           const Divider(height: 1),
                           ListTile(
                             leading: const Icon(
-                              Icons.center_focus_strong_rounded,
-                              color: StitchTheme.primary,
-                            ),
-                            title: Text(
-                              _tr(
-                                'Mở Camera AI Không Khung (Built-in)',
-                                'Open Frameless AI Camera (Built-in)',
-                              ),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                              ),
-                            ),
-                            subtitle: Text(
-                              _tr(
-                                'Tự vẽ đa giác bám mép giấy thời gian thực không cần căn khung',
-                                'Real-time 4-point polygon tracking without fixed frames',
-                              ),
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            trailing: const Icon(Icons.chevron_right_rounded),
-                            onTap: () {
-                              Navigator.of(ctx).pop();
-                              _startAiScan(forceBuiltInCamera: true);
-                            },
-                          ),
-                          const Divider(height: 1),
-                          ListTile(
-                            leading: const Icon(
                               Icons.auto_stories_outlined,
                               color: StitchTheme.primary,
                             ),
@@ -556,13 +526,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
           const SizedBox(width: 5),
           _circleHeaderIconButton(
-            icon: Icons.photo_camera_outlined,
-            color: StitchTheme.primary,
-            tooltip: _tr('Camera AI Không Khung', 'Frameless AI Camera'),
-            onTap: () => _startAiScan(forceBuiltInCamera: true),
-          ),
-          const SizedBox(width: 5),
-          _circleHeaderIconButton(
             icon: Icons.tune_rounded,
             color: StitchTheme.onSurfaceVariant,
             tooltip: _tr('Cài đặt & Bảo mật', 'Settings & Security'),
@@ -645,8 +608,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               Expanded(
                 child: GestureDetector(
-                  onTap: () => _startAiScan(forceBuiltInCamera: false),
-                  onLongPress: () => _startAiScan(forceBuiltInCamera: true),
+                  onTap: _startAiScan,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [

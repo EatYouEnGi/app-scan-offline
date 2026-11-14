@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:camera/camera.dart';
-import 'package:cunning_document_scanner/cunning_document_scanner.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/scan_models.dart';
@@ -727,27 +726,6 @@ class _ScannerScreenState extends State<ScannerScreen>
     }
   }
 
-  /// Mở trình quét AI gốc của hệ điều hành (Google ML Kit Document Scanner / Apple VisionKit).
-  Future<void> _switchToNativeOsAiScanner() async {
-    try {
-      await _stopStreamAndDispose();
-      final result = await CunningDocumentScanner.scanDocuments(
-        noOfPages: widget.singleShotMode ? 1 : 100,
-        scannerSource: ScannerSource.cameraAndGallery,
-        output: ScanOutput.images,
-        androidScannerMode: AndroidScannerMode.full,
-      );
-      if (!mounted) return;
-      if (result != null && result.images.isNotEmpty) {
-        Navigator.of(context).pop(result.images.toList());
-      } else {
-        await _setupCamera();
-      }
-    } catch (_) {
-      if (mounted) await _setupCamera();
-    }
-  }
-
   Future<void> _pickFromGallery() async {
     try {
       if (widget.singleShotMode) {
@@ -1065,49 +1043,46 @@ class _ScannerScreenState extends State<ScannerScreen>
                   ],
                 ),
                 const SizedBox(height: 10),
-                // Nhãn nổi chuyển sang Trình quét AI gốc ("AI Tự Động Làm Phẳng & Khử Bóng Mờ")
-                GestureDetector(
-                  onTap: _switchToNativeOsAiScanner,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 6,
+                // Nhãn thông tin xử lý ảnh AI
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: StitchTheme.surfaceProBase.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: StitchTheme.primaryDarkAccent.withValues(alpha: 0.45),
                     ),
-                    decoration: BoxDecoration(
-                      color: StitchTheme.surfaceProBase.withValues(alpha: 0.78),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: StitchTheme.primaryDarkAccent.withValues(alpha: 0.45),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.auto_awesome_rounded,
+                        size: 15,
+                        color: StitchTheme.secondaryFixed,
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.auto_awesome_rounded,
-                          size: 15,
-                          color: StitchTheme.secondaryFixed,
+                      const SizedBox(width: 6),
+                      Text(
+                        _tr(
+                          'AI Làm Phẳng • Trắng Nền & Làm Nét Tự Động',
+                          'AI Auto-Flatten • Clean Paper & Sharpen',
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _tr(
-                            'AI Tự Động Làm Phẳng & Khử Bóng Mờ',
-                            'AI Auto-Flatten & Shadow Removal',
-                          ),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: StitchTheme.primaryFixed,
-                          ),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: StitchTheme.primaryFixed,
                         ),
-                        const SizedBox(width: 5),
-                        const Icon(
-                          Icons.verified_rounded,
-                          size: 14,
-                          color: StitchTheme.tertiaryFixedDim,
-                        ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 5),
+                      const Icon(
+                        Icons.verified_rounded,
+                        size: 14,
+                        color: StitchTheme.tertiaryFixedDim,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1480,43 +1455,7 @@ class _ScannerScreenState extends State<ScannerScreen>
                 ],
               )
             else
-              InkWell(
-                onTap: _switchToNativeOsAiScanner,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: const BoxDecoration(
-                          color: StitchTheme.primaryContainerDark,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.auto_awesome_rounded,
-                          color: StitchTheme.tertiaryFixed,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _tr('AI Gốc', 'Native AI'),
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          color: StitchTheme.tertiaryFixed,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              const SizedBox(width: 56),
           ],
         ),
       ),

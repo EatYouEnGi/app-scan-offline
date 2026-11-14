@@ -324,8 +324,9 @@ class AppState extends ChangeNotifier {
             : await visionService.detectDocumentCorners(origPath);
         final pageId = _uuid.v4();
 
-        final appliedFilter =
-            alreadyCroppedByAi ? ScanFilterType.original : defaultFilter;
+        // Luôn áp dụng bộ lọc làm trắng nền & tăng nét chuẩn CamScanner (Magic Color)
+        // trừ khi người dùng chủ động đổi sang 'Gốc' sau này.
+        final appliedFilter = defaultFilter;
 
         final processedBytes = await visionService.processPageImage(
           originalImagePath: origPath,
