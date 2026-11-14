@@ -509,7 +509,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             borderRadius: BorderRadius.circular(999),
             child: Container(
               height: 36,
-              padding: const EdgeInsets.symmetric(horizontal: 9),
+              padding: const EdgeInsets.symmetric(horizontal: 11),
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: StitchTheme.primaryContainerLight,
@@ -518,45 +518,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
               child: Text(
                 widget.appState.isVi ? '🇻🇳 VI' : '🇬🇧 EN',
                 style: const TextStyle(
-                  fontSize: 11,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w800,
                   color: StitchTheme.primary,
                 ),
               ),
             ),
           ),
-          const SizedBox(width: 5),
-          _circleHeaderIconButton(
-            icon: Icons.tune_rounded,
-            color: StitchTheme.onSurfaceVariant,
-            tooltip: _tr('Cài đặt & Bảo mật', 'Settings & Security'),
-            onTap: _openSettingsSheet,
-          ),
         ],
-      ),
-    );
-  }
-
-  Widget _circleHeaderIconButton({
-    required IconData icon,
-    required Color color,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: StitchTheme.surfaceNeutralPill,
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Tooltip(
-          message: tooltip,
-          child: SizedBox(
-            width: 38,
-            height: 38,
-            child: Icon(icon, size: 19, color: color),
-          ),
-        ),
       ),
     );
   }
@@ -629,7 +598,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
           // Nút tròn Quét AI nổi hẳn lên trong phần lõm cong ở giữa
           Positioned(
-            bottom: barHeight + bottomInset - fabSize + fabProtrude - 6,
+            bottom: barHeight + bottomInset - fabSize + fabProtrude,
             child: GestureDetector(
               onTap: _startAiScan,
               child: Container(
