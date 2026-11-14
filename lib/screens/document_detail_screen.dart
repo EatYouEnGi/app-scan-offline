@@ -53,7 +53,9 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   Future<void> _scanMorePages() async {
     List<String>? captured =
         await widget.appState.launchNativeAiScanner(maxPages: 20);
+    bool usedBuiltInFallback = false;
     if (captured == null && mounted) {
+      usedBuiltInFallback = true;
       captured = await Navigator.of(context).push<List<String>>(
         MaterialPageRoute(
           builder: (_) => const ScannerScreen(),
@@ -64,6 +66,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     final updated = await widget.appState.addImagesToDocument(
       document: _doc,
       sourceImagePaths: captured,
+      alreadyCroppedByAi: !usedBuiltInFallback,
     );
     if (mounted) {
       setState(() => _doc = updated);
@@ -287,7 +290,7 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
   Future<void> _showExportModal() async {
     int selectedFormatIdx = 0; // 0: PDF, 1: Ảnh JPG, 2: Văn bản OCR
     PaperSizePreset selectedPaper = PaperSizePreset.a4;
-    PdfQualityPreset selectedQuality = PdfQualityPreset.medium;
+    PdfQualityPreset selectedQuality = PdfQualityPreset.high;
 
     Future<void> executePrimaryShare(BuildContext sheetCtx) async {
       Navigator.of(sheetCtx).pop();

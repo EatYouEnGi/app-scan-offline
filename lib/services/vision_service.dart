@@ -18,7 +18,7 @@ class _ProcessPagePayload {
     required this.cropQuad,
     required this.rotationDegrees,
     required this.filter,
-    this.maxDimension = 2800,
+    this.maxDimension = 3200,
   });
 }
 
@@ -61,7 +61,7 @@ class VisionService {
     required CropQuad cropQuad,
     required int rotationDegrees,
     required ScanFilterType filter,
-    int maxDimension = 2800,
+    int maxDimension = 3200,
   }) async {
     final file = File(originalImagePath);
     if (!await file.exists()) {
@@ -569,7 +569,7 @@ class VisionService {
     // 4. Áp dụng bộ lọc tài liệu.
     working = applyDocumentFilter(working, payload.filter);
 
-    return Uint8List.fromList(img.encodeJpg(working, quality: 94));
+    return Uint8List.fromList(img.encodeJpg(working, quality: 95));
   }
 
   /// Biến đổi phối cảnh 4 góc (Homography + nội suy song tuyến tính) để làm phẳng trang bị nghiêng.

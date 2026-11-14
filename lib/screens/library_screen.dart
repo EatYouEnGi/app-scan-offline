@@ -357,6 +357,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
         return Scaffold(
           backgroundColor: StitchTheme.surface,
+          extendBody: true,
           body: Stack(
             children: [
               SafeArea(
@@ -561,117 +562,134 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Widget _buildStitchBottomDockBar() {
-    return Container(
-      decoration: BoxDecoration(
-        color: StitchTheme.surfaceWhite.withValues(alpha: 0.96),
-        border: const Border(
-          top: BorderSide(color: StitchTheme.borderLight, width: 1),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, -2),
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    const double barHeight = 68;
+    const double fabSize = 62;
+    const double fabProtrude = 26;
+
+    return SizedBox(
+      height: barHeight + fabProtrude + bottomInset,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.bottomCenter,
+        children: [
+          // Thanh nền trắng với đường cong lõm mượt (Curved Notch) ở giữa giống hình mẫu
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: barHeight + bottomInset,
+            child: CustomPaint(
+              painter: _CurvedNotchBarPainter(
+                backgroundColor: StitchTheme.surfaceWhite,
+                borderColor: StitchTheme.borderLight,
+              ),
+              child: Padding(
+                padding: EdgeInsets.only(bottom: bottomInset),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _buildDockTabItem(
+                        icon: Icons.folder_copy_rounded,
+                        label: _tr('Thư viện', 'Library'),
+                        active: true,
+                        onTap: () => widget.appState.setFolderFilter('Tất cả tài liệu'),
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildDockTabItem(
+                        icon: Icons.photo_library_outlined,
+                        label: _tr('Nhập ảnh', 'Import'),
+                        active: false,
+                        onTap: _importImagesFromGallery,
+                      ),
+                    ),
+                    const SizedBox(width: 82),
+                    Expanded(
+                      child: _buildDockTabItem(
+                        icon: Icons.handyman_outlined,
+                        label: _tr('Công cụ', 'Tools'),
+                        active: false,
+                        onTap: _openPdfTools,
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildDockTabItem(
+                        icon: Icons.tune_rounded,
+                        label: _tr('Cài đặt', 'Settings'),
+                        active: false,
+                        onTap: _openSettingsSheet,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          // Nút tròn Quét AI nổi hẳn lên trong phần lõm cong ở giữa
+          Positioned(
+            bottom: barHeight + bottomInset - fabSize + fabProtrude - 6,
+            child: GestureDetector(
+              onTap: _startAiScan,
+              child: Container(
+                width: fabSize,
+                height: fabSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00897B), StitchTheme.primary],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: StitchTheme.primary.withValues(alpha: 0.36),
+                      blurRadius: 16,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.document_scanner_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+            ),
           ),
         ],
       ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 76,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              Expanded(
-                child: InkWell(
-                  onTap: _importImagesFromGallery,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.photo_library_outlined,
-                        size: 24,
-                        color: StitchTheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _tr('Nhập ảnh', 'Import'),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: StitchTheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Expanded(
-                child: GestureDetector(
-                  onTap: _startAiScan,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: BoxDecoration(
-                          color: StitchTheme.primary,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: StitchTheme.primary.withValues(alpha: 0.30),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.document_scanner_rounded,
-                          color: Colors.white,
-                          size: 25,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        _tr('Quét AI Tự Động', 'AI Auto Scan'),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: StitchTheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Expanded(
-                child: InkWell(
-                  onTap: _openPdfTools,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(
-                        Icons.handyman_outlined,
-                        size: 24,
-                        color: StitchTheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _tr('Công cụ', 'PDF Tools'),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: StitchTheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+    );
+  }
+
+  Widget _buildDockTabItem({
+    required IconData icon,
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    final color = active ? StitchTheme.primary : StitchTheme.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 23, color: color),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+              color: color,
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -1122,7 +1140,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final query = widget.appState.searchQuery;
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 115),
       itemCount: docs.length + 2,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
       itemBuilder: (context, index) {
@@ -1529,5 +1547,68 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ),
     );
+  }
+}
+
+/// Vẽ thanh điều hướng dưới cùng có đường cong lõm mượt (Curved Notch) ở chính giữa
+/// để ôm lấy nút tròn Quét AI nổi bật theo đúng mẫu thiết kế.
+class _CurvedNotchBarPainter extends CustomPainter {
+  final Color backgroundColor;
+  final Color borderColor;
+
+  const _CurvedNotchBarPainter({
+    required this.backgroundColor,
+    required this.borderColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final cx = w / 2;
+
+    const double notchRadius = 38.0;
+    const double notchDepth = 30.0;
+    const double curveSpread = 56.0;
+
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(cx - curveSpread, 0)
+      ..cubicTo(
+        cx - notchRadius,
+        0,
+        cx - notchRadius + 6,
+        notchDepth,
+        cx,
+        notchDepth,
+      )
+      ..cubicTo(
+        cx + notchRadius - 6,
+        notchDepth,
+        cx + notchRadius,
+        0,
+        cx + curveSpread,
+        0,
+      )
+      ..lineTo(w, 0)
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+
+    canvas.drawShadow(path, Colors.black.withValues(alpha: 0.14), 10, true);
+    canvas.drawPath(path, Paint()..color = backgroundColor);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = borderColor.withValues(alpha: 0.55)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CurvedNotchBarPainter oldDelegate) {
+    return oldDelegate.backgroundColor != backgroundColor ||
+        oldDelegate.borderColor != borderColor;
   }
 }

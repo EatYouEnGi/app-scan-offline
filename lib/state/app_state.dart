@@ -236,18 +236,20 @@ class AppState extends ChangeNotifier {
   }
 
   /// Mở trình quét AI trên thiết bị (Google ML Kit Document Scanner trên Android /
-  /// Apple VisionKit trên iOS): tự động bắt mép giấy mọi góc độ không cần khung,
-  /// tự chụp và làm phẳng trang.
+  /// Apple VisionKit trên iOS): vào thẳng máy ảnh, tự bắt mép, tự chụp và làm phẳng trang.
+  /// - Trả về danh sách đường dẫn ảnh nếu chụp thành công.
+  /// - Trả về `[]` (rỗng) nếu người dùng chủ động bấm Hủy / (X) để thoát.
+  /// - Trả về `null` CHỈ KHI thiết bị không hỗ trợ trình quét gốc.
   Future<List<String>?> launchNativeAiScanner({int maxPages = 100}) async {
     try {
       final result = await CunningDocumentScanner.scanDocuments(
         noOfPages: maxPages,
-        scannerSource: ScannerSource.cameraAndGallery,
+        scannerSource: ScannerSource.camera,
         output: ScanOutput.images,
         androidScannerMode: AndroidScannerMode.full,
       );
       if (result == null || result.images.isEmpty) {
-        return null;
+        return const <String>[];
       }
       return result.images.toList();
     } catch (_) {
@@ -605,7 +607,7 @@ class AppState extends ChangeNotifier {
   Future<String> exportSearchablePdf({
     required ScanDocument document,
     PaperSizePreset paperSize = PaperSizePreset.a4,
-    PdfQualityPreset quality = PdfQualityPreset.medium,
+    PdfQualityPreset quality = PdfQualityPreset.high,
     bool openShareSheet = true,
   }) async {
     _setBusy(true, 'Đang tạo tệp PDF nhiều trang chuẩn Tiếng Việt...');
@@ -652,7 +654,7 @@ class AppState extends ChangeNotifier {
   Future<String?> savePdfToDeviceFolder({
     required ScanDocument document,
     PaperSizePreset paperSize = PaperSizePreset.a4,
-    PdfQualityPreset quality = PdfQualityPreset.medium,
+    PdfQualityPreset quality = PdfQualityPreset.high,
   }) async {
     _setBusy(true, 'Đang chuẩn bị tệp PDF để lưu vào thiết bị...');
     try {
@@ -684,7 +686,7 @@ class AppState extends ChangeNotifier {
   Future<void> previewAndPrintPdf({
     required ScanDocument document,
     PaperSizePreset paperSize = PaperSizePreset.a4,
-    PdfQualityPreset quality = PdfQualityPreset.medium,
+    PdfQualityPreset quality = PdfQualityPreset.high,
   }) async {
     final latestDoc =
         await databaseService.getDocumentById(document.id) ?? document;
